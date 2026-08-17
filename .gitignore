@@ -1,0 +1,28 @@
+# 依赖与本地构建产物
+node_modules/
+dist/
+dist-electron/
+
+# 环境与日志
+.env
+*.log
+.DS_Store
+Thumbs.db
+
+# 工具/会话残留
+.workbuddy/
+.vscode/
+.idea/
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
+
+# 本地交付物体积大，不入库；磁盘上的 release/ 安装包与绿色版请自行保留
+release/
+*.blockmap
+
+# 运行时数据目录（若本地误建）
+db/
+data/

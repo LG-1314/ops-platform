@@ -1,0 +1,116 @@
+/* design-tokens.css — Ops Platform 设计 Token（锁定真源）
+ * 来源：docs/UIUX.md §2-§6 + docs/Spec.md §8
+ * 深色为默认 :root；浅色为 :root[data-theme="light"]
+ * 约束（P0）：禁 emoji 图标、禁紫粉渐变/糖果色、禁硬编码色值（#fff/#000 除外）。
+ * 所有颜色须经此引用；图表序列 c1..c8 仅限图表使用，禁止作为 UI 主色/渐变。
+ */
+
+:root,
+:root[data-theme='dark'] {
+  /* —— 表面层 —— */
+  --color-bg: #0B0E14;
+  --color-panel: #141923;
+  --color-panel-2: #1A202C;
+  --color-border: rgba(255, 255, 255, 0.08);
+
+  /* —— 前景层 —— */
+  --color-text: #E6E8EE;
+  --color-text-secondary: #A8B0BF;
+  --color-text-disabled: #6B7280;
+
+  /* —— 强调 + 语义色 —— */
+  --color-primary: #3D7BFF;          /* 电光蓝 accent */
+  --color-primary-hover: #5B92FF;
+  --color-primary-active: #2E6BE6;
+  --color-success: #34D399;
+  --color-warning: #F59E0B;
+  --color-danger: #F87171;
+  --color-info: #3D7BFF;             /* info 在本系统等同于 accent 蓝 */
+  --color-in-progress: #22D3EE;
+
+  /* —— 图表序列 c1..c8（仅图表） —— */
+  --color-chart-c1: #3D7BFF;
+  --color-chart-c2: #22D3EE;
+  --color-chart-c3: #34D399;
+  --color-chart-c4: #FACC15;
+  --color-chart-c5: #FB923C;
+  --color-chart-c6: #F87171;
+  --color-chart-c7: #A78BFA;         /* 图表专用，非 UI 渐变/糖果色 */
+  --color-chart-c8: #94A3B8;         /* 中性石板灰，凑足 8 序列 */
+
+  /* —— 间距（4px 网格） —— */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-base: 16px;
+  --space-lg: 20px;
+  --space-xl: 24px;
+  --space-2xl: 32px;
+  --space-3xl: 40px;
+  --space-4xl: 48px;
+
+  /* —— 圆角（卡片 8px，见 UIUX 原则 5） —— */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-pill: 9999px;
+
+  /* —— 字体族 —— */
+  --font-ui: 'Inter', 'Noto Sans SC', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Roboto Mono', ui-monospace, monospace;
+
+  /* —— 字号（7 级：12/14/16/18/20/24/32） —— */
+  --font-xs: 12px;
+  --font-sm: 14px;
+  --font-md: 16px;
+  --font-lg: 18px;
+  --font-xl: 20px;
+  --font-2xl: 24px;
+  --font-3xl: 32px;
+
+  /* —— 阴影（深色靠亮度递进分层，阴影仅用于浮层） —— */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.5);
+  --shadow-overlay: 0 8px 32px rgba(0, 0, 0, 0.6);
+
+  /* —— z-index —— */
+  --z-app-bar: 1100;
+  --z-drawer: 1200;
+  --z-modal: 1300;
+  --z-snackbar: 1400;
+  --z-tooltip: 1500;
+}
+
+:root[data-theme='light'] {
+  --color-bg: #F7F9FC;
+  --color-panel: #FFFFFF;
+  --color-panel-2: #F1F4F9;
+  --color-border: rgba(15, 23, 42, 0.10);
+
+  --color-text: #111827;
+  --color-text-secondary: #4B5563;
+  --color-text-disabled: #9CA3AF;
+
+  --color-primary: #2E6BE6;
+  --color-primary-hover: #5B92FF;
+  --color-primary-active: #1E54C4;
+  --color-success: #16A34A;
+  --color-warning: #D97706;
+  --color-danger: #DC2626;
+  --color-info: #2563EB;
+  --color-in-progress: #0891B2;
+
+  /* 图表序列沿用同色相，保证跨主题一致 */
+  --color-chart-c1: #3D7BFF;
+  --color-chart-c2: #22D3EE;
+  --color-chart-c3: #34D399;
+  --color-chart-c4: #FACC15;
+  --color-chart-c5: #FB923C;
+  --color-chart-c6: #F87171;
+  --color-chart-c7: #A78BFA;
+  --color-chart-c8: #94A3B8;
+
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.08);
+  --shadow-md: 0 4px 16px rgba(16, 24, 40, 0.12);
+  --shadow-overlay: 0 8px 32px rgba(16, 24, 40, 0.16);
+}

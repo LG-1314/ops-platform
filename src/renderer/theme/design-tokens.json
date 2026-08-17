@@ -1,0 +1,102 @@
+{
+  "color": {
+    "dark": {
+      "bg": "#0B0E14",
+      "panel": "#141923",
+      "panel2": "#1A202C",
+      "border": "rgba(255, 255, 255, 0.08)",
+      "text": "#E6E8EE",
+      "textSecondary": "#A8B0BF",
+      "textDisabled": "#6B7280",
+      "primary": "#3D7BFF",
+      "primaryHover": "#5B92FF",
+      "primaryActive": "#2E6BE6",
+      "success": "#34D399",
+      "warning": "#F59E0B",
+      "danger": "#F87171",
+      "info": "#3D7BFF",
+      "inProgress": "#22D3EE",
+      "chart": {
+        "c1": "#3D7BFF",
+        "c2": "#22D3EE",
+        "c3": "#34D399",
+        "c4": "#FACC15",
+        "c5": "#FB923C",
+        "c6": "#F87171",
+        "c7": "#A78BFA",
+        "c8": "#94A3B8"
+      }
+    },
+    "light": {
+      "bg": "#F7F9FC",
+      "panel": "#FFFFFF",
+      "panel2": "#F1F4F9",
+      "border": "rgba(15, 23, 42, 0.10)",
+      "text": "#111827",
+      "textSecondary": "#4B5563",
+      "textDisabled": "#9CA3AF",
+      "primary": "#2E6BE6",
+      "primaryHover": "#5B92FF",
+      "primaryActive": "#1E54C4",
+      "success": "#16A34A",
+      "warning": "#D97706",
+      "danger": "#DC2626",
+      "info": "#2563EB",
+      "inProgress": "#0891B2",
+      "chart": {
+        "c1": "#3D7BFF",
+        "c2": "#22D3EE",
+        "c3": "#34D399",
+        "c4": "#FACC15",
+        "c5": "#FB923C",
+        "c6": "#F87171",
+        "c7": "#A78BFA",
+        "c8": "#94A3B8"
+      }
+    }
+  },
+  "space": {
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "base": 16,
+    "lg": 20,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 40,
+    "4xl": 48
+  },
+  "radius": {
+    "sm": 4,
+    "md": 8,
+    "lg": 12,
+    "pill": 9999
+  },
+  "font": {
+    "size": {
+      "xs": 12,
+      "sm": 14,
+      "md": 16,
+      "lg": 18,
+      "xl": 20,
+      "2xl": 24,
+      "3xl": 32
+    }
+  },
+  "fontFamily": {
+    "ui": "'Inter', 'Noto Sans SC', system-ui, -apple-system, sans-serif",
+    "mono": "'JetBrains Mono', 'Roboto Mono', ui-monospace, monospace"
+  },
+  "shadow": {
+    "dark": {
+      "sm": "0 1px 2px rgba(0, 0, 0, 0.4)",
+      "md": "0 4px 16px rgba(0, 0, 0, 0.5)",
+      "overlay": "0 8px 32px rgba(0, 0, 0, 0.6)"
+    },
+    "light": {
+      "sm": "0 1px 2px rgba(16, 24, 40, 0.08)",
+      "md": "0 4px 16px rgba(16, 24, 40, 0.12)",
+      "overlay": "0 8px 32px rgba(16, 24, 40, 0.16)"
+    }
+  }
+}

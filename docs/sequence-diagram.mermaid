@@ -1,0 +1,68 @@
+%% ============ 图1：系统体检主线（点击开始体检 → 后端执行命令 → 前端渲染状态） ============
+sequenceDiagram
+    actor User
+    participant FE as DiagnosticsPage (React)
+    participant Bus as ApiBus (bus.ts)
+    participant API as Express DiagnosticRouter
+    participant Svc as DiagnosticService
+    participant Eng as DiagnosticsEngine (engine.ts)
+
+    User->>FE: 选择资产，点击「开始体检」
+    FE->>Bus: diagnostics.run(assetId)
+    Bus->>API: POST /api/diagnostics/run {assetId}
+    API->>Svc: run(assetId?)
+    Svc->>Eng: diagnose()
+    Eng-->>Svc: DiagnoseResult（只读 exec 标准命令）
+    Svc-->>API: DiagnoseResult
+    API-->>Bus: 200 {code:0, data, message}
+    Bus-->>FE: DiagnoseResult
+    FE->>FE: 渲染 MetricCard（✅⚠️❌ 状态映射）
+    FE-->>User: 结构化诊断报告 + 建议 + 导出按钮
+
+%% ============ 图2：态势巡检仪表盘聚合 ============
+sequenceDiagram
+    actor User
+    participant FE as DashboardPage
+    participant Bus as ApiBus
+    participant API as Express DashboardRouter
+    participant DSvc as DashboardService
+    participant Store as MemoryStore
+
+    User->>FE: 打开仪表盘
+    FE->>Bus: dashboard.summary()
+    Bus->>API: GET /api/dashboard
+    API->>DSvc: summarize()
+    DSvc->>Store: getAssets() / getAlerts() / getPatrols()
+    Store-->>DSvc: 数据集合
+    DSvc-->>API: DashboardSummary（健康分布/告警/巡检）
+    API-->>Bus: 200 {code:0, data}
+    Bus-->>FE: DashboardSummary
+    FE->>FE: KPI卡 + 健康分布环 + 最近告警流 + 资产榜
+
+%% ============ 图3：知识检索 + 关联视图 ============
+sequenceDiagram
+    actor User
+    participant FE as KnowledgePage / RelationPage
+    participant Bus as ApiBus
+    participant API as Express Knowledge/Relation Router
+    participant KSvc as KnowledgeService
+    participant KB as KnowledgeBase (knowledge.mjs)
+
+    User->>FE: 输入现象「磁盘满」
+    FE->>Bus: knowledge.search("磁盘满")
+    Bus->>API: GET /api/knowledge/search?q=磁盘满
+    API->>KSvc: search(q)
+    KSvc->>KB: searchKnowledge(q)
+    KB-->>KSvc: FAQ 命中
+    KSvc-->>API: KnowledgeHit[]
+    API-->>Bus: 200 {code:0, data}
+    Bus-->>FE: KnowledgeHit[]（标题/正文/来源）
+    User->>FE: 点击某资产查看「相关资料和相关项目」
+    FE->>Bus: relations.of(asset)
+    Bus->>API: GET /api/relations/:asset
+    API->>KSvc: related(asset)
+    KSvc->>KB: relatedProjects(asset)
+    KB-->>KSvc: RelatedProject[]
+    KSvc-->>API: RelatedProject[]
+    API-->>Bus: 200 {code:0, data}
+    Bus-->>FE: 关联三栏（项目/工单/知识）渲染
