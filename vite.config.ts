@@ -16,6 +16,7 @@ const alias = {
 // 主进程/preload 编译时，除「项目源码（相对路径、src/ 入口、@shared/@diagnostics 别名、绝对路径）」外一律 external，
 // 由运行时 node 从 node_modules 解析（express、cors 及其依赖），避免把整棵依赖树打进 main.js。
 const externalizeDeps = (id: string): boolean => {
+  if (id === 'electron') return false // electron 由 vite-plugin-electron 处理，不 external（否则 require 解析到 npm 包字符串路径）
   if (id.startsWith('@shared') || id.startsWith('@diagnostics')) return false // 项目别名 → 打包
   if (id.startsWith('.') || id.startsWith('/')) return false // 相对/绝对路径 → 打包
   if (/^[A-Za-z]:[\\/]/.test(id)) return false // Windows 绝对路径（vite 解析后的别名/源码）→ 打包
