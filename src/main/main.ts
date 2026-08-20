@@ -459,27 +459,51 @@ if (!app.requestSingleInstanceLock()) {
   // 尝试启动 server；端口冲突时自动在 BASE_PORT 基础上递增 10 次。
   // 关键：先 createServer（构造 app + 附加 WebSocket），再 attach 'error' 监听，最后 listen()，
   // 这样 EADDRINUSE 会被 Promise reject 捕获，不会逃到 uncaughtException 弹窗。
+  // 健壮性：① server.listen 可能同步抛错（某些平台），用 try/catch 转 reject；
+  // ② finish() 防双触发；③ 失败后 close 该 server 防句柄泄漏。
   async function tryStartServer(): Promise<{ server: http.Server; port: number }> {
     for (let offset = 0; offset < 10; offset += 1) {
       const port = BASE_PORT + offset
       const server = createServer()
+      // 兜底：任何未被 once('error') 消费的后续 error 事件不得逃逸为 uncaughtException
+      server.on('error', () => {})
       try {
         writeLog('ops-platform-boot.log', `server-listen-attempt port=${port}`)
         await new Promise<void>((resolve, reject) => {
+          let settled = false
+          const finish = (err?: Error): void => {
+            if (settled) return
+            settled = true
+            if (err) reject(err)
+            else resolve()
+          }
           server.once('listening', () => {
             writeLog('ops-platform-boot.log', `server-listening port=${port}`)
-            resolve()
+            finish()
           })
           server.once('error', (err) => {
-            writeLog('ops-platform-crash.log', `[server-error] port=${port} code=${(err as NodeJS.ErrnoException).code} msg=${err.message}`)
-            reject(err)
+            writeLog(
+              'ops-platform-crash.log',
+              `[server-error] port=${port} code=${(err as NodeJS.ErrnoException).code} msg=${err.message}`
+            )
+            finish(err as Error)
           })
-          server.listen(port, '127.0.0.1')
+          try {
+            server.listen(port, '127.0.0.1')
+          } catch (err) {
+            finish(err as Error) // 同步抛错（EADDRINUSE 等）
+          }
         })
         apiServer = server
         startBackgroundJobs()
         return { server, port }
       } catch (err) {
+        // 失败即关闭该 server，避免句柄/端口残留
+        try {
+          server.close()
+        } catch {
+          /* ignore */
+        }
         const code = (err as NodeJS.ErrnoException)?.code
         if (code === 'EADDRINUSE' && offset < 9) {
           writeLog('ops-platform-boot.log', `port-inuse-retry port=${port} next=${port + 1}`)
