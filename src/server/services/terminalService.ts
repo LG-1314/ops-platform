@@ -3,6 +3,9 @@ import { URL } from 'node:url'
 import { Client } from 'ssh2'
 import { connectSsh } from './sshService'
 import { credentialService } from './credentialService'
+import { currentUser } from './authService'
+import { auditService } from './auditService'
+import { logger } from '../utils/logger'
 
 // SSH 终端桥接：浏览器经 WebSocket 连到本机能力总线，服务端用 ssh2 建立到目标主机的
 // shell 会话，双向透传输入/输出。无凭据或连接失败时给出可读错误并关闭，绝不崩溃。
@@ -15,6 +18,9 @@ export function attachTerminal(wss: WebSocketServer): void {
     const credentialId = q.get('credentialId') || undefined
     const cols = q.get('cols') ? Number(q.get('cols')) : 80
     const rows = q.get('rows') ? Number(q.get('rows')) : 24
+    // 用户会话（verifyClient 已校验非空，这里仅取用户名用于审计）
+    const user = currentUser(q.get('ut') || '')
+    const username = user?.username || 'unknown'
 
     let client: Client | null = null
     let shell: { end: () => void; write: (d: string) => void; setWindow?: (r: number, c: number, w: number, h: number) => void; on: (e: string, cb: (d: Buffer) => void) => void; stderr: { on: (e: string, cb: (d: Buffer) => void) => void } } | null = null
@@ -49,6 +55,7 @@ export function attachTerminal(wss: WebSocketServer): void {
           params.password = secret.password
           params.privateKey = secret.privateKey
         }
+        auditService.record('terminal.connect', username, `host=${host}:${port || 22} credential=${credentialId || '(none)'}`)
         client = await connectSsh(params)
         client.shell(
           { cols, rows, term: 'xterm-256color' },
@@ -98,6 +105,7 @@ export function attachTerminal(wss: WebSocketServer): void {
         )
       } catch (e) {
         const msg = (e as Error).message
+        logger.error(`terminal.connect failed user=${username} host=${host}:${port || 22} err=${msg}`)
         try {
           ws.send(`\r\n[终端] 连接失败: ${msg}\r\n`)
         } catch {

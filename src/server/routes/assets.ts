@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { asyncHandler, ok, fail } from '../utils/response'
 import { assetService } from '../services/assetService'
 import { monitorService } from '../services/monitorService'
+import { paginate } from '../utils/paginate'
 import type { Asset, AssetType } from '@shared/types'
 
 export const assetsRouter = Router()
@@ -10,7 +11,7 @@ export const assetsRouter = Router()
 assetsRouter.get('/', asyncHandler(async (req, res) => {
   const q = typeof req.query.q === 'string' ? req.query.q : undefined
   const type = typeof req.query.type === 'string' ? (req.query.type as AssetType) : undefined
-  ok(res, assetService.list(q, type))
+  ok(res, paginate(assetService.list(q, type), req.query as Record<string, unknown>))
 }))
 
 assetsRouter.post('/discover', asyncHandler(async (_req, res) => {

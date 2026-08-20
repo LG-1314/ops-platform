@@ -1,9 +1,23 @@
 import { memoryStore } from '../store/memoryStore'
 import { getLatest } from './hostMetricsCache'
+import { notificationService } from './notificationService'
 import type { AlertRule, AlertLevel, Alert, Asset } from '@shared/types'
 
 function genId(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
+}
+
+/**
+ * 告警再触发冷却窗口：规则+资产 维度，命中开单后 N 分钟内不重复开单，
+ * 防止「告警被 resolved 但指标仍越阈值」时每 30s 评估周期刷出风暴。
+ * 指标恢复正常时清除冷却记录，下次越阈值立即重新开单。
+ */
+const ALERT_COOLDOWN_MS = 10 * 60 * 1000
+const firedAt = new Map<string, number>()
+
+/** 清空冷却记录（测试用/手动重置）。 */
+export function resetAlertCooldown(): void {
+  firedAt.clear()
 }
 
 /** 取规则对应指标数值；取不到（如未采集过 SSH 指标）返回 null（跳过该资产）。 */
@@ -32,6 +46,18 @@ function metricValue(rule: AlertRule, asset: Asset): { value: number; label: str
       if (!m || m.disk.length === 0) return null
       const v = Math.max(...m.disk.map((d) => d.usedPct))
       return { value: v, label: `${v}%` }
+    }
+    case 'netRx': {
+      const m = getLatest(asset.id)
+      if (!m?.network?.rxRateKbps) return null
+      const v = Math.round(m.network.rxRateKbps * 100) / 100
+      return { value: v, label: `${v} KB/s` }
+    }
+    case 'netTx': {
+      const m = getLatest(asset.id)
+      if (!m?.network?.txRateKbps) return null
+      const v = Math.round(m.network.txRateKbps * 100) / 100
+      return { value: v, label: `${v} KB/s` }
     }
   }
   return null
@@ -91,19 +117,40 @@ export const alertRuleService = {
     return memoryStore.removeAlertRule(id)
   },
 
-  /** 评估全部启用规则，对命中的资产生成告警（按 rule+asset 去重）。返回新增告警数。 */
+  /**
+   * 评估全部启用规则，对命中的资产生成告警。
+   * 去重窗口：同一 rule+asset 在「尚未真正恢复」前不重复建单——
+   * 即已存在任意非 resolved 状态的同名单（active/ack/silenced 均算"仍在处理中"），不再新建，
+   * 避免确认/静默后每轮评估又刷出重复告警形成风暴。
+   * 仅当该单被 resolved（或不存在）且本次仍命中阈值时，才重新开单。
+   */
   evaluateAll(): number {
     const rules = memoryStore.getAlertRules().filter((r) => r.enabled)
     if (rules.length === 0) return 0
-    const active = memoryStore.getAlerts().filter((a) => a.state === 'active')
+    // 仍在处理中的告警（非 resolved）按 title+assetId 建索引，用于去重
+    const openByKey = new Map<string, boolean>()
+    for (const a of memoryStore.getAlerts()) {
+      if (a.state === 'resolved') continue
+      openByKey.set(`${a.title}@@${a.assetId}`, true)
+    }
+    const now = Date.now()
     let created = 0
     for (const rule of rules) {
       for (const asset of targets(rule)) {
         const mv = metricValue(rule, asset)
         if (!mv) continue
-        if (!cmp(mv.value, rule.operator, rule.threshold)) continue
+        const firing = cmp(mv.value, rule.operator, rule.threshold)
+        const key = `${rule.id}:${asset.id}`
+        if (!firing) {
+          // 指标已恢复正常：清除冷却记录，允许下次越阈值立即开单
+          firedAt.delete(key)
+          continue
+        }
+        const lastFired = firedAt.get(key) || 0
+        if (now - lastFired < ALERT_COOLDOWN_MS) continue
         const title = `${rule.name} · ${asset.name}`
-        if (active.some((a) => a.title === title && a.assetId === asset.id)) continue
+        const openKey = `${title}@@${asset.id}`
+        if (openByKey.has(openKey)) continue
         const alert: Alert = {
           id: genId('alert'),
           level: rule.level,
@@ -114,7 +161,11 @@ export const alertRuleService = {
           createdAt: new Date().toISOString(),
         }
         memoryStore.addAlert(alert)
+        openByKey.set(openKey, true)
+        firedAt.set(key, now)
         created++
+        // 生成告警后向各通知渠道推送（失败不影响告警落库）
+        void notificationService.notify(alert).catch(() => {})
       }
     }
     return created

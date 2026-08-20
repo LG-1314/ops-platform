@@ -8,13 +8,34 @@ import {
   CardContent,
   Divider,
   CircularProgress,
-  Chip,
   Alert as MuiAlert,
   useTheme,
+  Button,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  TextField,
+  MenuItem,
+  IconButton,
+  Tooltip,
 } from '@mui/material'
-import { BugReport, AccountTree } from '@mui/icons-material'
+import {
+  BugReport,
+  AccountTree,
+  Add as IconAdd,
+  Delete as IconDelete,
+  Flag as IconFlow,
+  PlayArrow as IconRun,
+} from '@mui/icons-material'
 import { api } from '../../capabilities/bus'
-import type { Incident, CicdPipeline, AlertLevel, IncidentState, Status } from '@shared/types'
+import type {
+  Incident,
+  CicdPipeline,
+  AlertLevel,
+  IncidentState,
+  Status,
+} from '@shared/types'
 import PageHeader from '../components/PageHeader'
 import StatusBadge from '../components/StatusBadge'
 import EmptyState from '../components/EmptyState'
@@ -44,6 +65,22 @@ const STATE_LABEL: Record<IncidentState, string> = {
   postmortem: '复盘',
 }
 
+const STATE_FLOW: IncidentState[] = ['open', 'investigating', 'resolved', 'postmortem']
+
+const CICD_STAGES = ['build', 'test', 'deploy'] as const
+
+const emptyIncident = () => ({
+  title: '',
+  level: 'P2' as AlertLevel,
+  assignee: '',
+})
+
+const emptyPipeline = () => ({
+  name: '',
+  stage: 'build' as (typeof CICD_STAGES)[number],
+  status: 'pending' as CicdPipeline['status'],
+})
+
 export default function Automation() {
   const theme = useTheme()
   const [incidents, setIncidents] = useState<Incident[]>([])
@@ -51,7 +88,20 @@ export default function Automation() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
-  useEffect(() => {
+  // 事故表单
+  const [incOpen, setIncOpen] = useState(false)
+  const [incForm, setIncForm] = useState(emptyIncident())
+  const [incSaving, setIncSaving] = useState(false)
+
+  // 流水线表单
+  const [pipeOpen, setPipeOpen] = useState(false)
+  const [pipeForm, setPipeForm] = useState(emptyPipeline())
+  const [pipeSaving, setPipeSaving] = useState(false)
+  const [runningId, setRunningId] = useState('')
+
+  const load = () => {
+    setLoading(true)
+    setError('')
     Promise.all([api.automation.incidents(), api.automation.cicd()])
       .then(([i, c]) => {
         setIncidents(i)
@@ -59,9 +109,100 @@ export default function Automation() {
       })
       .catch((e) => setError((e as Error).message || '加载自动化数据失败'))
       .finally(() => setLoading(false))
-  }, [])
+  }
 
-  if (loading) {
+  useEffect(load, [])
+
+  const createIncident = async () => {
+    setIncSaving(true)
+    setError('')
+    try {
+      await api.automation.createIncident({
+        title: incForm.title,
+        level: incForm.level,
+        assignee: incForm.assignee || undefined,
+      })
+      setIncOpen(false)
+      setIncForm(emptyIncident())
+      load()
+    } catch (e) {
+      setError((e as Error).message || '创建失败')
+    } finally {
+      setIncSaving(false)
+    }
+  }
+
+  const flowIncident = async (inc: Incident) => {
+    const idx = STATE_FLOW.indexOf(inc.state)
+    const next = STATE_FLOW[Math.min(idx + 1, STATE_FLOW.length - 1)]
+    setError('')
+    try {
+      await api.automation.patchIncident(inc.id, next)
+      load()
+    } catch (e) {
+      setError((e as Error).message || '流转失败')
+    }
+  }
+
+  const removeIncident = async (id: string) => {
+    setError('')
+    try {
+      await api.automation.removeIncident(id)
+      load()
+    } catch (e) {
+      setError((e as Error).message || '删除失败')
+    }
+  }
+
+  const createPipeline = async () => {
+    setPipeSaving(true)
+    setError('')
+    try {
+      await api.automation.createPipeline({
+        name: pipeForm.name,
+        stage: pipeForm.stage,
+        status: pipeForm.status,
+      })
+      setPipeOpen(false)
+      setPipeForm(emptyPipeline())
+      load()
+    } catch (e) {
+      setError((e as Error).message || '创建失败')
+    } finally {
+      setPipeSaving(false)
+    }
+  }
+
+  const runPipeline = async (p: CicdPipeline) => {
+    setRunningId(p.id)
+    setError('')
+    try {
+      // 台账模拟触发：流水线尚未接真实 CI/CD 引擎，此处仅记录运行状态与时间。
+      // 真实接入（GitHub/GitLab Webhook）后替换为实际触发 + 状态回写。
+      await api.automation.patchPipeline(p.id, {
+        status: 'success',
+        lastRunAt: new Date().toISOString(),
+        stage: p.stage,
+      })
+      load()
+    } catch (e) {
+      setError((e as Error).message || '触发失败')
+    } finally {
+      setRunningId('')
+    }
+  }
+
+  const removePipeline = async (id: string) => {
+    setError('')
+    try {
+      await api.automation.removePipeline(id)
+      load()
+    } catch (e) {
+      setError((e as Error).message || '删除失败')
+    }
+  }
+
+  if (loading && incidents.length === 0 && cicd.length === 0) {
     return (
       <Box display="flex" justifyContent="center" py={10}>
         <CircularProgress />
@@ -73,7 +214,25 @@ export default function Automation() {
     <Box>
       <PageHeader
         title="流程自动化"
-        subtitle="事故管理（创建 / 跟踪 / 复盘）+ CI/CD 状态"
+        subtitle="事故管理（创建 / 跟踪 / 复盘）+ CI/CD 流水线台账"
+        actions={
+          <>
+            <Button
+              variant="outlined"
+              startIcon={<AccountTree />}
+              onClick={() => { setPipeForm(emptyPipeline()); setPipeOpen(true) }}
+            >
+              添加流水线
+            </Button>
+            <Button
+              variant="contained"
+              startIcon={<IconAdd />}
+              onClick={() => { setIncForm(emptyIncident()); setIncOpen(true) }}
+            >
+              新建事故
+            </Button>
+          </>
+        }
       />
 
       {error && (
@@ -92,7 +251,7 @@ export default function Automation() {
               </Stack>
               <Divider sx={{ mb: 1.5 }} />
               {incidents.length === 0 ? (
-                <EmptyState text="暂无事故" icon={<BugReport />} />
+                <EmptyState text="暂无事故，点击「新建事故」创建" icon={<BugReport />} />
               ) : (
                 <Stack spacing={1.5}>
                   {incidents.map((inc) => (
@@ -113,6 +272,25 @@ export default function Automation() {
                         {inc.assignee ? `负责人：${inc.assignee} · ` : ''}
                         更新：{new Date(inc.updatedAt).toLocaleString()}
                       </Typography>
+                      <Stack direction="row" spacing={0.5} mt={1}>
+                        {inc.state !== 'postmortem' && (
+                          <Tooltip title="推进到下一状态">
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              startIcon={<IconFlow />}
+                              onClick={() => flowIncident(inc)}
+                            >
+                              流转变更
+                            </Button>
+                          </Tooltip>
+                        )}
+                        <Tooltip title="删除事故">
+                          <IconButton size="small" color="error" onClick={() => removeIncident(inc.id)}>
+                            <IconDelete fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      </Stack>
                     </Box>
                   ))}
                 </Stack>
@@ -130,7 +308,7 @@ export default function Automation() {
               </Stack>
               <Divider sx={{ mb: 1.5 }} />
               {cicd.length === 0 ? (
-                <EmptyState text="暂无流水线数据" icon={<AccountTree />} />
+                <EmptyState text="暂无流水线，点击「添加流水线」录入" icon={<AccountTree />} />
               ) : (
                 <Stack spacing={1.5}>
                   {cicd.map((p) => (
@@ -150,6 +328,23 @@ export default function Automation() {
                           ? ` · ${new Date(p.lastRunAt).toLocaleString()}`
                           : ''}
                       </Typography>
+                      <Stack direction="row" spacing={0.5} mt={1}>
+                        <Tooltip title="触发运行">
+                          <IconButton
+                            size="small"
+                            color="primary"
+                            disabled={runningId === p.id}
+                            onClick={() => runPipeline(p)}
+                          >
+                            {runningId === p.id ? <CircularProgress size={16} /> : <IconRun fontSize="small" />}
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title="删除流水线">
+                          <IconButton size="small" color="error" onClick={() => removePipeline(p.id)}>
+                            <IconDelete fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      </Stack>
                     </Box>
                   ))}
                 </Stack>
@@ -158,6 +353,90 @@ export default function Automation() {
           </Card>
         </Grid>
       </Grid>
+
+      {/* 新建事故 */}
+      <Dialog open={incOpen} onClose={() => setIncOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>新建事故</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <TextField
+              label="标题"
+              fullWidth
+              value={incForm.title}
+              onChange={(e) => setIncForm((f) => ({ ...f, title: e.target.value }))}
+            />
+            <TextField
+              label="级别"
+              select
+              fullWidth
+              value={incForm.level}
+              onChange={(e) => setIncForm((f) => ({ ...f, level: e.target.value as AlertLevel }))}
+            >
+              <MenuItem value="P0">P0</MenuItem>
+              <MenuItem value="P1">P1</MenuItem>
+              <MenuItem value="P2">P2</MenuItem>
+              <MenuItem value="P3">P3</MenuItem>
+            </TextField>
+            <TextField
+              label="负责人（可选）"
+              fullWidth
+              value={incForm.assignee}
+              onChange={(e) => setIncForm((f) => ({ ...f, assignee: e.target.value }))}
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setIncOpen(false)}>取消</Button>
+          <Button variant="contained" disabled={incSaving || !incForm.title.trim()} onClick={createIncident}>
+            {incSaving ? '创建中…' : '创建'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* 添加流水线 */}
+      <Dialog open={pipeOpen} onClose={() => setPipeOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>添加流水线</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <TextField
+              label="名称"
+              fullWidth
+              value={pipeForm.name}
+              onChange={(e) => setPipeForm((f) => ({ ...f, name: e.target.value }))}
+            />
+            <TextField
+              label="阶段"
+              select
+              fullWidth
+              value={pipeForm.stage}
+              onChange={(e) => setPipeForm((f) => ({ ...f, stage: e.target.value as (typeof CICD_STAGES)[number] }))}
+            >
+              {CICD_STAGES.map((s) => (
+                <MenuItem key={s} value={s}>
+                  {s}
+                </MenuItem>
+              ))}
+            </TextField>
+            <TextField
+              label="初始状态"
+              select
+              fullWidth
+              value={pipeForm.status}
+              onChange={(e) => setPipeForm((f) => ({ ...f, status: e.target.value as CicdPipeline['status'] }))}
+            >
+              <MenuItem value="pending">pending</MenuItem>
+              <MenuItem value="success">success</MenuItem>
+              <MenuItem value="failed">failed</MenuItem>
+            </TextField>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setPipeOpen(false)}>取消</Button>
+          <Button variant="contained" disabled={pipeSaving || !pipeForm.name.trim()} onClick={createPipeline}>
+            {pipeSaving ? '创建中…' : '创建'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   )
 }

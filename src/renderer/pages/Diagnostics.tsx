@@ -13,12 +13,11 @@ import {
   CardContent,
   Divider,
 } from '@mui/material'
-import { PlayArrow, FileDownload } from '@mui/icons-material'
+import { PlayArrow } from '@mui/icons-material'
 import { api } from '../../capabilities/bus'
 import type { Asset, DiagnoseResult } from '@shared/types'
 import MetricCard from '../components/MetricCard'
 import PageHeader from '../components/PageHeader'
-import { downloadText } from '../utils/download'
 
 export default function Diagnostics() {
   const [assets, setAssets] = useState<Asset[]>([])
@@ -44,45 +43,20 @@ export default function Diagnostics() {
     }
   }
 
-  const exportReport = async () => {
-    if (!result) return
-    try {
-      const rep = await api.reports.export({
-        type: 'diagnose',
-        assetId: assetId || undefined,
-        format: 'markdown',
-        title: `系统体检报告 - ${result.host}`,
-      })
-      downloadText(rep.filename, rep.content)
-    } catch (e) {
-      setError((e as Error).message || '导出失败')
-    }
-  }
-
   return (
     <Box>
       <PageHeader
-        title="系统全栈体检"
-        subtitle="CPU / 内存 / 磁盘 / 运行时长 / 负载 一键只读诊断"
+        title="系统全栈体检（本机）"
+        subtitle="对运行本运维平台的本机进行 CPU / 内存 / 磁盘 / 负载 一键只读诊断"
         actions={
-          <>
-            <Button
-              variant="outlined"
-              startIcon={<FileDownload />}
-              disabled={!result}
-              onClick={exportReport}
-            >
-              导出报告
-            </Button>
-            <Button
-              variant="contained"
-              startIcon={loading ? <CircularProgress size={16} color="inherit" /> : <PlayArrow />}
-              onClick={run}
-              disabled={loading}
-            >
-              {loading ? '体检中…' : '开始体检'}
-            </Button>
-          </>
+          <Button
+            variant="contained"
+            startIcon={loading ? <CircularProgress size={16} color="inherit" /> : <PlayArrow />}
+            onClick={run}
+            disabled={loading}
+          >
+            {loading ? '体检中…' : '开始体检'}
+          </Button>
         }
       />
 
@@ -103,7 +77,7 @@ export default function Diagnostics() {
           ))}
         </TextField>
         <Typography variant="caption" color="text.secondary">
-          诊断全程只读，不修改系统
+          体检对象固定为本机（运行本软件的这台机器）；所选资产仅用于把本次体检结果关联到该资产的历史记录，不会改变体检对象。
         </Typography>
       </Stack>
 
@@ -117,7 +91,7 @@ export default function Diagnostics() {
         <Card>
           <CardContent>
             <Typography variant="body2" color="text.secondary" align="center" py={4}>
-              选择资产后点击「开始体检」，将实时采集 CPU / 内存 / 磁盘 / 负载等指标并给出「正常 / 警告 / 严重」评估与优化建议。
+              点击「开始体检」即对运行本软件的这台机器实时采集 CPU / 内存 / 磁盘 / 负载等指标，并给出「正常 / 警告 / 严重」评估与优化建议。远程主机的指标请在「主机」页通过 SSH 采集。
             </Typography>
           </CardContent>
         </Card>

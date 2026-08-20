@@ -17,6 +17,7 @@ import {
   useTheme,
 } from '@mui/material'
 import { Search, Refresh, Add, DeleteOutline, Radar } from '@mui/icons-material'
+import { useSearchParams } from 'react-router-dom'
 import { api } from '../../capabilities/bus'
 import type { Asset, AssetType, Status } from '@shared/types'
 import DataTable, { Column } from '../components/DataTable'
@@ -42,12 +43,14 @@ interface AddForm {
 
 export default function Assets() {
   const theme = useTheme()
+  const [searchParams] = useSearchParams()
   const [assets, setAssets] = useState<Asset[]>([])
   const [loading, setLoading] = useState(true)
   const [discovering, setDiscovering] = useState(false)
   const [probingId, setProbingId] = useState('')
   const [error, setError] = useState('')
-  const [q, setQ] = useState('')
+  // 支持从知识关联跳转（?q=资产名）预填搜索
+  const [q, setQ] = useState(() => searchParams.get('q') ?? '')
   const [type, setType] = useState('')
 
   const [dialogOpen, setDialogOpen] = useState(false)

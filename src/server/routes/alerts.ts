@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { asyncHandler, ok, fail } from '../utils/response'
 import { alertService } from '../services/alertService'
+import { paginate } from '../utils/paginate'
 import type { Alert, AlertLevel, AlertState } from '@shared/types'
 
 export const alertsRouter = Router()
@@ -9,7 +10,7 @@ alertsRouter.get('/', asyncHandler(async (req, res) => {
   const level = typeof req.query.level === 'string' ? (req.query.level as AlertLevel) : undefined
   const state = typeof req.query.state === 'string' ? (req.query.state as AlertState) : undefined
   const assetId = typeof req.query.assetId === 'string' ? req.query.assetId : undefined
-  ok(res, alertService.list(level, state, assetId))
+  ok(res, paginate(alertService.list(level, state, assetId), req.query as Record<string, unknown>))
 }))
 
 alertsRouter.post('/', asyncHandler(async (req, res) => {

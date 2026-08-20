@@ -4,6 +4,34 @@
 // —— 状态枚举（与 engine.ts 兼容）——
 export type Status = 'ok' | 'warn' | 'error' | 'unknown'
 
+// —— 用户身份视角（本地单机工具，无服务端登录；admin=完整视图，personal=常用精简视图）——
+export type UserRole = 'admin' | 'personal'
+
+// —— RBAC 多用户（单机多账号：登录会话 + 角色权限；admin 可管理用户）——
+export interface UserAccount {
+  id: string
+  username: string // 登录名（唯一）
+  displayName: string // 显示名
+  role: UserRole
+  passwordHash: string // scrypt 哈希（盐内嵌，格式 salt:hash）
+  createdAt: string
+  lastLoginAt?: string
+  mustChangePassword?: boolean // 首次登录（播种的默认口令）须强制改密
+}
+export interface AuthSessionInfo {
+  token: string
+  user: UserAccount // 不含 passwordHash（脱敏）
+}
+export interface SafeUser {
+  id: string
+  username: string
+  displayName: string
+  role: UserRole
+  createdAt: string
+  lastLoginAt?: string
+  mustChangePassword?: boolean // 首次登录须强制改密
+}
+
 // —— 诊断（复用 engine.ts 结构）——
 export interface Metric {
   name: string
@@ -94,6 +122,10 @@ export interface Alert {
   state: AlertState
   createdAt: string
   ackedBy?: string
+  /** 最近一次状态变更时间（确认/静默/解决/重新激活），用于审计与趋势统计 */
+  updatedAt?: string
+  /** 解决时间（state=resolved 时写入），驱动「已恢复」趋势线 */
+  resolvedAt?: string
 }
 
 // —— 仪表盘 ——
@@ -110,20 +142,6 @@ export interface DashboardSummary {
   patrolsToday: number
   assets: AssetHealthRow[]
   recentAlerts: Alert[]
-}
-
-// —— 报告 ——
-export interface ReportRequest {
-  type: 'diagnose' | 'patrol' | 'dashboard'
-  assetId?: string
-  format: 'markdown' | 'pdf'
-  title?: string
-}
-export interface ReportResult {
-  format: 'markdown' | 'pdf'
-  filename: string
-  content: string // markdown 文本；pdf 为占位/base64 dataurl
-  generatedAt: string
 }
 
 // —— 自动化 / 事故 ——
@@ -185,10 +203,10 @@ export interface ClusterDetail {
   agents: AgentStatus[]
 }
 
-// —— OpenClaw Guardrails ——
+// —— OpenClaw Guardrails（防呆检查：命令/变更执行前的风险预检）——
 export interface GuardrailCheck {
   id: string
-  category: 'desensitize' | 'approval' | 'cross-device'
+  category: 'desensitize' | 'approval' | 'cross-device' | 'dangerous-cmd'
   target: string
   risk: 'low' | 'medium' | 'high'
   passed: boolean
@@ -197,19 +215,28 @@ export interface GuardrailCheck {
 export interface GuardrailResult {
   id: string
   scope: string
+  target: string
   checkedAt: string
   checks: GuardrailCheck[]
   riskItems: number
   passed: boolean
 }
+// —— 历史运行记录（持久化，供前端列表展示）——
+export interface GuardrailRun extends GuardrailResult {
+  runType: 'check'
+}
 
 // —— Dolores 工具箱 ——
 export type DoloresTool = 'health' | 'memory-sync' | 'dir-clean' | 'log' | 'cron'
 export interface DoloresResult {
+  id: string
   tool: DoloresTool
   status: Status
   logs: string[]
   executedAt: string
+}
+export interface DoloresRun extends DoloresResult {
+  runType: 'run'
 }
 
 // —— 凭据（敏感字段加密存储，绝不明文落盘）——
@@ -264,6 +291,12 @@ export interface DiskUsage {
   usedGb: number
   usedPct: number
 }
+export interface NetSample {
+  rxBytes?: number // 累计接收字节（/proc/net/dev，Linux 专属）
+  txBytes?: number // 累计发送字节
+  rxRateKbps?: number // 接收速率（KB/s，由两次采样差分得出）
+  txRateKbps?: number // 发送速率（KB/s）
+}
 export interface HostMetricSample {
   assetId: string
   collectedAt: string
@@ -279,6 +312,7 @@ export interface HostMetricSample {
   memUsedMb?: number
   memFreeMb?: number
   swapUsedMb?: number
+  network?: NetSample
   disk: DiskUsage[]
   status: Status
 }
@@ -309,6 +343,15 @@ export interface DbHealth {
   metrics: DbMetric[]
   checkedAt: string
   error?: string
+}
+
+// —— DB/K8s 健康时序点（独立于主机指标，供监控大盘趋势图）——
+export interface HealthPoint {
+  assetId: string
+  kind: 'db' | 'cluster'
+  checkedAt: string
+  status: Status
+  score: number
 }
 
 // —— K8s 集群详情 ——
@@ -349,7 +392,7 @@ export interface CloudResource {
 }
 
 // —— 告警规则引擎 ——
-export type AlertMetric = 'reachable' | 'latency' | 'healthScore' | 'cpu' | 'mem' | 'disk'
+export type AlertMetric = 'reachable' | 'latency' | 'healthScore' | 'cpu' | 'mem' | 'disk' | 'netRx' | 'netTx'
 export type AlertOperator = '>' | '>=' | '<' | '<=' | '==' | '!='
 export interface AlertRule {
   id: string
@@ -362,6 +405,28 @@ export interface AlertRule {
   threshold: number
   level: AlertLevel
   message?: string
+  createdAt: string
+}
+
+// —— 通知渠道（告警对外推送：飞书/钉钉/Webhook/应用内/邮件）——
+export type NotificationChannelType = 'webhook' | 'feishu' | 'dingtalk' | 'inapp' | 'email'
+export interface NotificationChannel {
+  id: string
+  name: string
+  type: NotificationChannelType
+  enabled: boolean
+  url?: string // webhook / 飞书 / 钉钉 机器人地址
+  secret?: string // 入站明文签名密钥（创建/更新时）；落盘即加密为 secretEnc，列表脱敏
+  secretEnc?: string // 签名密钥密文（AES-256-GCM）
+  // 邮件 SMTP（type === 'email'）
+  smtpHost?: string
+  smtpPort?: number
+  smtpSecure?: boolean // true=SSL/TLS(465)，false=STARTTLS(587)
+  smtpUser?: string
+  smtpPassword?: string // 入站明文密码；落盘即加密为 smtpPasswordEnc
+  smtpPasswordEnc?: string // 邮件密码密文
+  smtpFrom?: string // 发件人，默认 = smtpUser
+  smtpTo?: string // 收件人，逗号分隔
   createdAt: string
 }
 

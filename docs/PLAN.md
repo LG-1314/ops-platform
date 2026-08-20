@@ -1,3 +1,6 @@
+> ⚠️ **DEPRECATED（已过时）**：本文件为早期 v1 方案（ECharts/SQLite/node-cron），与当前 Vite+React+MUI+Express 实现已严重偏离，仅作背景参考。当前以 **`docs/Spec.md`** 为活跃规范；一切以代码为准。历史审查见 `docs/全维度检查与理解报告.md`、修复见 `docs/修复实施记录.md`。
+>
+
 # 企业级运维服务器 · 全维度管理平台 — 技术方案与实施规划
 
 > 状态：方案 v1.0 ｜ 形态：跨平台桌面应用 ｜ 技术栈：Electron + React + TypeScript + Vite + Node + SQLite

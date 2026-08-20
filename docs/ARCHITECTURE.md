@@ -1,3 +1,6 @@
+> ⚠️ **DEPRECATED（部分过时）**：本文档规划的 SQLite 升级与若干 SDK 版本（`@kubernetes/client-node ^1.4.0`、mysql2/pg/ioredis 版本）均未落地，存储仍为本仓 JSON 文件持久化。当前以 **`docs/Spec.md`** 为活跃规范；一切以代码为准。历史审查见 `docs/全维度检查与理解报告.md`、修复见 `docs/修复实施记录.md`。
+>
+
 # 架构文档 - 企业级运维监控管理平台 v2.0
 
 > 生成日期：2026-08-17

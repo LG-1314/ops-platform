@@ -22,7 +22,6 @@ import {
   DialogContent,
   DialogActions,
   Switch,
-  Typography,
   Snackbar,
 } from '@mui/material'
 import { Add as IconAdd, Delete as IconDelete, PlayArrow as IconEval, Refresh as IconRefresh } from '@mui/icons-material'
@@ -60,6 +59,8 @@ const METRICS: { v: AlertMetric; label: string }[] = [
   { v: 'cpu', label: 'CPU 使用率(%)' },
   { v: 'mem', label: '内存使用率(%)' },
   { v: 'disk', label: '磁盘使用率(%)' },
+  { v: 'netRx', label: '网络接收速率(KB/s)' },
+  { v: 'netTx', label: '网络发送速率(KB/s)' },
 ]
 const OPS: AlertOperator[] = ['>', '>=', '<', '<=', '==', '!=']
 
@@ -110,11 +111,12 @@ export default function Alerts() {
       .finally(() => setRuleLoading(false))
   }
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(() => {
     loadAlerts()
     loadRules()
   }, [])
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   const act = async (id: string, st: AlertState) => {
     setActingId(id)

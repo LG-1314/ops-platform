@@ -17,14 +17,12 @@ import {
   TextField,
   Tabs,
   Tab,
-  useTheme,
 } from '@mui/material'
-import { PlayArrow, Add, History } from '@mui/icons-material'
+import { PlayArrow, Add } from '@mui/icons-material'
 import { api } from '../../capabilities/bus'
 import type { PatrolTask, PatrolLayer, PatrolRun, Status } from '@shared/types'
 import PageHeader from '../components/PageHeader'
 import StatusBadge from '../components/StatusBadge'
-import { downloadText } from '../utils/download'
 import { Alert as MuiAlert } from '@mui/material'
 
 const LAYER_LABEL: Record<PatrolLayer, string> = {
@@ -43,7 +41,6 @@ function runStatus(s: string): Status {
 }
 
 export default function Patrols() {
-  const theme = useTheme()
   const [tasks, setTasks] = useState<PatrolTask[]>([])
   const [loading, setLoading] = useState(true)
   const [runningId, setRunningId] = useState('')
@@ -90,25 +87,15 @@ export default function Patrols() {
     }
   }
 
-  const exportReport = async () => {
-    const rep = await api.reports.export({ type: 'patrol', format: 'markdown', title: '巡检汇总报告' })
-    downloadText(rep.filename, rep.content)
-  }
-
   return (
     <Box>
       <PageHeader
         title="智能巡检"
         subtitle="基础资源 / 中间件 / 容器 / 日志 / 业务 多层巡检编排"
         actions={
-          <>
-            <Button variant="outlined" startIcon={<History />} onClick={exportReport}>
-              导出报告
-            </Button>
-            <Button variant="contained" startIcon={<Add />} onClick={() => setOpen(true)}>
-              新建巡检
-            </Button>
-          </>
+          <Button variant="contained" startIcon={<Add />} onClick={() => setOpen(true)}>
+            新建巡检
+          </Button>
         }
       />
 

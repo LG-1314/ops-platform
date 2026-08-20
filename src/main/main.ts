@@ -4,15 +4,13 @@ import { pathToFileURL } from 'node:url'
 import fs from 'node:fs'
 import http from 'node:http'
 import { createServer, startBackgroundJobs, stopBackgroundJobs } from '../server/index'
+import { authHeaders, getToken } from '../server/auth'
 
 // Electron 仅作壳：启动 Express 能力总线（提供 /api 能力），
 // 渲染进程经自定义协议 app:// 直接由主进程从 resources/app-dist 读取前端产物，
 // 完全绕过 Chromium 访问本地 HTTP 可能失败的代理/防火墙/TUN 拦截问题。
 // Express 仍作为 API 能力总线在 127.0.0.1:8787 运行，CORS 全开。
 const BASE_PORT = Number(process.env.PORT) || 8787
-
-// 开发态默认走 IPv4，避免 Vite 只绑 ::1 时 Chromium 解析 localhost 失败
-const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL || 'http://127.0.0.1:5173'
 
 // 禁用系统代理，防止 Clash/企业代理把 127.0.0.1 也劫持导致 ERR_FAILED
 app.commandLine.appendSwitch('no-proxy-server')
@@ -98,17 +96,20 @@ function forwardRequest(
   port: number,
   method: string,
   relPath: string,
-  body?: unknown
+  body?: unknown,
+  userToken?: string
 ): Promise<{ statusCode: number; body: unknown }> {
   return new Promise((resolve, reject) => {
     const data = body != null ? JSON.stringify(body) : undefined
+    const headers: Record<string, string> = { 'Content-Type': 'application/json', Accept: 'application/json', ...authHeaders() }
+    if (userToken) headers['x-ops-user-token'] = userToken
     const req = http.request(
       {
         host: '127.0.0.1',
         port,
         path: `/api${relPath}`,
         method,
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        headers,
       },
       (res) => {
         const chunks: Buffer[] = []
@@ -131,9 +132,9 @@ function forwardRequest(
   })
 }
 
-ipcMain.handle('ops-api', async (_e, arg: { method: string; path: string; body?: unknown }) => {
+ipcMain.handle('ops-api', async (_e, arg: { method: string; path: string; body?: unknown; userToken?: string }) => {
   const port = Number(process.env.OPS_API_PORT || BASE_PORT)
-  const { statusCode, body } = await forwardRequest(port, arg.method, arg.path, arg.body)
+  const { statusCode, body } = await forwardRequest(port, arg.method, arg.path, arg.body, arg.userToken)
   // Express 统一返回信封 { code, data, message }；这里直接透传该信封，
   // 渲染端 bus.ts 的 request() 正是按此信封解析（res.code === 0 视为成功）。
   // /api 路由永远返回 JSON 信封（含 404 / fail），不会返回 HTML，故可安全解开 statusCode 包装。
@@ -147,6 +148,9 @@ ipcMain.handle('ops-api', async (_e, arg: { method: string; path: string; body?:
     data: null,
   }
 })
+
+// 渲染进程取回能力总线令牌（用于终端 WebSocket 鉴权），不落盘、不对外暴露明文凭据。
+ipcMain.handle('ops-auth-token', () => getToken())
 
 // 渲染进程运行时错误（经 preload 转发），独立落盘便于定位"无声黑屏"
 ipcMain.on('renderer-error', (_e, info: { kind: string; msg: string }) => {
@@ -187,21 +191,8 @@ if (!app.requestSingleInstanceLock()) {
   let apiServer: http.Server | null = null
   let isQuitting = false
 
-  const MIME_TYPES: Record<string, string> = {
-    '.html': 'text/html; charset=utf-8',
-    '.js': 'application/javascript; charset=utf-8',
-    '.css': 'text/css; charset=utf-8',
-    '.json': 'application/json; charset=utf-8',
-    '.png': 'image/png',
-    '.jpg': 'image/jpeg',
-    '.jpeg': 'image/jpeg',
-    '.svg': 'image/svg+xml',
-    '.ico': 'image/x-icon',
-    '.woff2': 'font/woff2',
-    '.woff': 'font/woff',
-    '.ttf': 'font/ttf',
-  }
-
+  /* eslint-disable no-inner-declarations */
+  // 以下函数需闭包访问 win/apiServer/isQuitting，故在 else 块内声明（含分支启动逻辑）。
   function registerAppProtocol(): void {
     const baseDir = app.isPackaged
       ? path.join(process.resourcesPath, 'app-dist')
@@ -239,7 +230,7 @@ if (!app.requestSingleInstanceLock()) {
                 path: `${rel}${url.search || ''}`,
                 method,
                 timeout: 60000,
-                headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+                headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...authHeaders() },
               },
               (res) => {
                 const chunks: Buffer[] = []
@@ -624,4 +615,5 @@ if (!app.requestSingleInstanceLock()) {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) boot()
   })
+  /* eslint-enable no-inner-declarations */
 }

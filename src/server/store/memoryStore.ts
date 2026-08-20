@@ -10,8 +10,16 @@ import type {
   AlertRule,
   DbConnection,
   CloudAccount,
+  NotificationChannel,
+  CicdPipeline,
+  KnowledgeHit,
+  GuardrailRun,
+  DoloresRun,
+  UserAccount,
 } from '@shared/types'
-import { loadStore, schedulePersist } from './persist'
+import { loadStore, schedulePersist, persistNow } from './persist'
+import { encrypt } from '../utils/crypto'
+import { hashPassword } from '../services/authService'
 
 // 进程内内存存储 + 文件持久化（重启不丢）。SQLite 后续替换点。单例。
 interface Store {
@@ -24,6 +32,12 @@ interface Store {
   alertRules: AlertRule[]
   dbConnections: DbConnection[]
   cloudAccounts: CloudAccount[]
+  notificationChannels: NotificationChannel[]
+  cicdPipelines: CicdPipeline[]
+  knowledge: KnowledgeHit[]
+  guardrailRuns: GuardrailRun[]
+  doloresRuns: DoloresRun[]
+  users: UserAccount[]
 }
 
 function genId(prefix: string): string {
@@ -40,6 +54,12 @@ const store: Store = {
   alertRules: [],
   dbConnections: [],
   cloudAccounts: [],
+  notificationChannels: [],
+  cicdPipelines: [],
+  knowledge: [],
+  guardrailRuns: [],
+  doloresRuns: [],
+  users: [],
 }
 
 function seed(): void {
@@ -144,15 +164,21 @@ function seed(): void {
     relatedKnowledge: ['内存不足 OOM 进程被杀'],
   })
 
-  store.clusters.push({
-    id: 'cluster-prod',
-    name: '生产集群',
-    endpoint: 'https://k8s-prod.internal',
-    connected: false,
-    nodeCount: 0,
-    healthScore: 0,
-    status: 'unknown',
-  })
+  // 注：不再预置「生产集群」种子。无凭据/不可达的占位集群会让用户点详情必 502，
+  // 改为由用户自行录入真实集群（关联凭据或提供 kubeconfig）后，详情页才会真实连接。
+
+  // 默认管理员账号（RBAC）：admin / admin123，首次登录强制改密
+  if (store.users.length === 0) {
+    store.users.push({
+      id: genId('user'),
+      username: 'admin',
+      displayName: '系统管理员',
+      role: 'admin',
+      passwordHash: hashPassword('admin123'),
+      createdAt: now,
+      mustChangePassword: true,
+    })
+  }
 }
 
 // 初始化：有持久化文件则合并加载，否则播种并落盘
@@ -168,6 +194,32 @@ if (persisted && typeof persisted === 'object') {
   store.alertRules = p.alertRules ?? []
   store.dbConnections = p.dbConnections ?? []
   store.cloudAccounts = p.cloudAccounts ?? []
+  store.notificationChannels = p.notificationChannels ?? []
+  store.cicdPipelines = p.cicdPipelines ?? []
+  store.knowledge = p.knowledge ?? []
+  store.guardrailRuns = p.guardrailRuns ?? []
+  store.doloresRuns = p.doloresRuns ?? []
+  store.users = p.users ?? []
+  // 老版本数据升级：无任何用户时播种默认管理员 admin/admin123
+  if (store.users.length === 0) {
+    store.users.push({
+      id: genId('user'),
+      username: 'admin',
+      displayName: '系统管理员',
+      role: 'admin',
+      passwordHash: hashPassword('admin123'),
+      createdAt: new Date().toISOString(),
+      mustChangePassword: true,
+    })
+  }
+  // 旧数据迁移：历史版本曾明文存通知渠道签名密钥，此处一次性加密为 secretEnc（不落明文）。
+  for (const c of store.notificationChannels) {
+    if (c.secret && !c.secretEnc) {
+      c.secretEnc = encrypt(c.secret)
+      delete c.secret
+    }
+  }
+  schedulePersist(store)
 } else {
   seed()
   schedulePersist(store)
@@ -175,6 +227,11 @@ if (persisted && typeof persisted === 'object') {
 
 function persist(): void {
   schedulePersist(store)
+}
+
+/** 立即落盘（进程退出前调用，确保防抖窗口内的变更不丢失）。 */
+export function flushStore(): void {
+  persistNow(store)
 }
 
 function upsert<T extends { id: string }>(arr: T[], item: T): T {
@@ -185,6 +242,8 @@ function upsert<T extends { id: string }>(arr: T[], item: T): T {
 }
 
 export const memoryStore = {
+  /** 立即落盘全部内存数据（退出前调用） */
+  flush: flushStore,
   // 资产
   getAssets: (): Asset[] => store.assets,
   addAsset: (a: Asset): Asset => {
@@ -265,6 +324,13 @@ export const memoryStore = {
     persist()
     return store.incidents[i]
   },
+  removeIncident: (id: string): boolean => {
+    const i = store.incidents.findIndex((x) => x.id === id)
+    if (i < 0) return false
+    store.incidents.splice(i, 1)
+    persist()
+    return true
+  },
 
   // 集群
   getClusters: (): ClusterInfo[] => store.clusters,
@@ -272,6 +338,20 @@ export const memoryStore = {
     const r = upsert(store.clusters, c)
     persist()
     return r
+  },
+  updateCluster: (id: string, patch: Partial<ClusterInfo>): ClusterInfo | undefined => {
+    const i = store.clusters.findIndex((x) => x.id === id)
+    if (i < 0) return undefined
+    store.clusters[i] = { ...store.clusters[i], ...patch, id }
+    persist()
+    return store.clusters[i]
+  },
+  removeCluster: (id: string): boolean => {
+    const i = store.clusters.findIndex((x) => x.id === id)
+    if (i < 0) return false
+    store.clusters.splice(i, 1)
+    persist()
+    return true
   },
 
   // 凭据
@@ -358,6 +438,117 @@ export const memoryStore = {
     const i = store.cloudAccounts.findIndex((x) => x.id === id)
     if (i < 0) return false
     store.cloudAccounts.splice(i, 1)
+    persist()
+    return true
+  },
+
+  // 通知渠道
+  getNotificationChannels: (): NotificationChannel[] => store.notificationChannels,
+  addNotificationChannel: (c: NotificationChannel): NotificationChannel => {
+    store.notificationChannels.push(c)
+    persist()
+    return c
+  },
+  updateNotificationChannel: (id: string, patch: Partial<NotificationChannel>): NotificationChannel | undefined => {
+    const i = store.notificationChannels.findIndex((x) => x.id === id)
+    if (i < 0) return undefined
+    store.notificationChannels[i] = { ...store.notificationChannels[i], ...patch, id }
+    persist()
+    return store.notificationChannels[i]
+  },
+  removeNotificationChannel: (id: string): boolean => {
+    const i = store.notificationChannels.findIndex((x) => x.id === id)
+    if (i < 0) return false
+    store.notificationChannels.splice(i, 1)
+    persist()
+    return true
+  },
+
+  // CI/CD 流水线（真实台账，可增删改，替代早期硬编码示例数据）
+  getCicdPipelines: (): CicdPipeline[] => store.cicdPipelines,
+  addCicdPipeline: (p: CicdPipeline): CicdPipeline => {
+    const r = upsert(store.cicdPipelines, p)
+    persist()
+    return r
+  },
+  updateCicdPipeline: (id: string, patch: Partial<CicdPipeline>): CicdPipeline | undefined => {
+    const i = store.cicdPipelines.findIndex((x) => x.id === id)
+    if (i < 0) return undefined
+    store.cicdPipelines[i] = { ...store.cicdPipelines[i], ...patch, id }
+    persist()
+    return store.cicdPipelines[i]
+  },
+  removeCicdPipeline: (id: string): boolean => {
+    const i = store.cicdPipelines.findIndex((x) => x.id === id)
+    if (i < 0) return false
+    store.cicdPipelines.splice(i, 1)
+    persist()
+    return true
+  },
+
+  // 自维护知识库（持久化，替代早期裸内存数组）
+  getKnowledge: (): KnowledgeHit[] => store.knowledge,
+  addKnowledge: (k: KnowledgeHit): KnowledgeHit => {
+    const r = upsert(store.knowledge, k)
+    persist()
+    return r
+  },
+  updateKnowledge: (id: string, patch: Partial<KnowledgeHit>): KnowledgeHit | undefined => {
+    const i = store.knowledge.findIndex((x) => x.id === id)
+    if (i < 0) return undefined
+    store.knowledge[i] = { ...store.knowledge[i], ...patch, id }
+    persist()
+    return store.knowledge[i]
+  },
+  removeKnowledge: (id: string): boolean => {
+    const i = store.knowledge.findIndex((x) => x.id === id)
+    if (i < 0) return false
+    store.knowledge.splice(i, 1)
+    persist()
+    return true
+  },
+
+  // Guardrails 防呆检查历史（最新在前，最多保留 100 条）
+  getGuardrailRuns: (): GuardrailRun[] => store.guardrailRuns,
+  addGuardrailRun: (r: GuardrailRun): GuardrailRun => {
+    store.guardrailRuns.unshift(r)
+    if (store.guardrailRuns.length > 100) store.guardrailRuns.length = 100
+    persist()
+    return r
+  },
+
+  // Dolores 工具箱执行历史（最新在前，最多保留 100 条）
+  getDoloresRuns: (): DoloresRun[] => store.doloresRuns,
+  addDoloresRun: (r: DoloresRun): DoloresRun => {
+    store.doloresRuns.unshift(r)
+    if (store.doloresRuns.length > 100) store.doloresRuns.length = 100
+    persist()
+    return r
+  },
+
+  // 用户账号（RBAC）
+  getUsers: (): UserAccount[] => store.users,
+  addUser: (u: UserAccount): UserAccount => {
+    store.users.push(u)
+    persist()
+    return u
+  },
+  updateUser: (id: string, patch: Partial<UserAccount>): UserAccount | undefined => {
+    const i = store.users.findIndex((x) => x.id === id)
+    if (i < 0) return undefined
+    store.users[i] = { ...store.users[i], ...patch, id }
+    persist()
+    return store.users[i]
+  },
+  removeUser: (id: string): boolean => {
+    const i = store.users.findIndex((x) => x.id === id)
+    if (i < 0) return false
+    // 禁止删除最后一个管理员，避免平台失去管理入口
+    const target = store.users[i]
+    if (target.role === 'admin' && store.users.filter((x) => x.role === 'admin').length <= 1) {
+      return false
+    }
+    store.users.splice(i, 1)
     persist()
     return true
   },

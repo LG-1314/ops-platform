@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   Box,
   Paper,
@@ -35,7 +35,6 @@ import type {
   CloudAccount,
   CloudProvider,
   CloudResource,
-  Credential,
 } from '@shared/types'
 
 function providerLabel(p: CloudProvider): string {
@@ -45,7 +44,6 @@ function providerLabel(p: CloudProvider): string {
 export default function Cloud() {
   const theme = useTheme()
   const [accounts, setAccounts] = useState<CloudAccount[]>([])
-  const [creds, setCreds] = useState<Credential[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
@@ -61,15 +59,12 @@ export default function Cloud() {
     secretKey: string
   }>({ name: '', provider: 'tencent', region: 'ap-guangzhou', accessKey: '', secretKey: '' })
 
-  const cloudCreds = useMemo(() => creds.filter((c) => c.kind === 'cloud'), [creds])
-
   async function load() {
     setLoading(true)
     setError(null)
     try {
-      const [a, cr] = await Promise.all([api.cloud.list(), api.credentials.list()])
+      const a = await api.cloud.list()
       setAccounts(a)
-      setCreds(cr)
     } catch (e) {
       setError((e as Error).message)
     } finally {

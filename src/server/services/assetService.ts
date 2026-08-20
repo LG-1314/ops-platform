@@ -55,25 +55,31 @@ export const assetService = {
     return memoryStore.removeAsset(id)
   },
 
-  /** 自动发现本机：用 os 信息造一个本地资产（已存在则更新） */
+  /** 自动发现本机：用 os 信息造一个本地资产（已存在则仅补充缺失字段，不覆盖监控结果）。 */
   discover(): Asset[] {
     const now = new Date().toISOString()
-    const local: Asset = {
-      id: 'asset-localhost',
-      name: `本机 (${hostname()})`,
-      type: 'server',
-      host: hostname(),
-      ip: '127.0.0.1',
-      source: 'auto',
-      tags: ['local', os.platform(), os.arch()],
-      createdAt: now,
-      healthScore: 92,
-      status: 'ok',
-      lastScanAt: now,
+    const existing = memoryStore.getAssets().find((a) => a.id === 'asset-localhost')
+    if (!existing) {
+      const local: Asset = {
+        id: 'asset-localhost',
+        name: `本机 (${hostname()})`,
+        type: 'server',
+        host: hostname(),
+        ip: '127.0.0.1',
+        source: 'auto',
+        tags: ['local', os.platform(), os.arch()],
+        createdAt: now,
+        healthScore: 92,
+        status: 'ok',
+        lastScanAt: now,
+      }
+      memoryStore.addAsset(local)
+    } else {
+      // 仅补标签等静态信息，绝不回写 healthScore/status（那是由 monitorService 实时算出的），
+      // 也保留已关联的 credentialId，避免 SSH 指标采集因 discover 而失效。
+      const tags = Array.from(new Set([...(existing.tags || []), 'local', os.platform(), os.arch()]))
+      memoryStore.updateAsset('asset-localhost', { tags })
     }
-    const existing = memoryStore.getAssets().find((a) => a.id === local.id)
-    if (!existing) memoryStore.addAsset(local)
-    else memoryStore.updateAsset(local.id, local)
     return memoryStore.getAssets()
   },
 }

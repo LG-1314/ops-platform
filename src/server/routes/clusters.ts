@@ -1,7 +1,10 @@
 import { Router } from 'express'
 import { asyncHandler, ok, fail } from '../utils/response'
+import { requireUser } from '../services/authService'
 import { memoryStore } from '../store/memoryStore'
 import { detail as k8sDetail } from '../services/k8sService'
+import { paginate } from '../utils/paginate'
+import { logger } from '../utils/logger'
 import type { ClusterInfo } from '@shared/types'
 
 export const clustersRouter = Router()
@@ -10,11 +13,11 @@ function genId(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
 }
 
-clustersRouter.get('/', asyncHandler(async (_req, res) => {
-  ok(res, memoryStore.getClusters())
+clustersRouter.get('/', requireUser, asyncHandler(async (req, res) => {
+  ok(res, paginate(memoryStore.getClusters(), req.query as Record<string, unknown>))
 }))
 
-clustersRouter.post('/', asyncHandler(async (req, res) => {
+clustersRouter.post('/', requireUser, asyncHandler(async (req, res) => {
   const b = req.body as Partial<ClusterInfo>
   if (!b?.name || !b?.endpoint) return fail(res, 400, 'name/endpoint 必填')
   const c: ClusterInfo = {
@@ -32,7 +35,7 @@ clustersRouter.post('/', asyncHandler(async (req, res) => {
 }))
 
 // 拉取集群真实详情（节点/工作负载），并回写连通性与健康分
-clustersRouter.get('/:id', asyncHandler(async (req, res) => {
+clustersRouter.get('/:id', requireUser, asyncHandler(async (req, res) => {
   const cluster = memoryStore.getClusters().find((c) => c.id === req.params.id)
   if (!cluster) return fail(res, 404, 'cluster not found')
   try {
@@ -40,11 +43,13 @@ clustersRouter.get('/:id', asyncHandler(async (req, res) => {
     memoryStore.addCluster(d.cluster) // upsert 连通性/健康分
     ok(res, d)
   } catch (e) {
-    fail(res, 502, (e as Error).message)
+    // 安全：对外只给通用文案，原始错误仅服务端日志
+    logger.error(`[clusters] detail failed: ${e instanceof Error ? e.stack || e.message : String(e)}`)
+    fail(res, 502, '集群连接失败，请检查 endpoint / 凭据 / 网络')
   }
 }))
 
-clustersRouter.post('/:id/scan', asyncHandler(async (req, res) => {
+clustersRouter.post('/:id/scan', requireUser, asyncHandler(async (req, res) => {
   const cluster = memoryStore.getClusters().find((c) => c.id === req.params.id)
   if (!cluster) return fail(res, 404, 'cluster not found')
   try {
@@ -52,6 +57,27 @@ clustersRouter.post('/:id/scan', asyncHandler(async (req, res) => {
     memoryStore.addCluster(d.cluster)
     ok(res, d)
   } catch (e) {
-    fail(res, 502, (e as Error).message)
+    logger.error(`[clusters] scan failed: ${e instanceof Error ? e.stack || e.message : String(e)}`)
+    fail(res, 502, '集群连接失败，请检查 endpoint / 凭据 / 网络')
   }
+}))
+
+// 更新集群（名称 / endpoint / 关联凭据 / 认证类型）
+clustersRouter.put('/:id', requireUser, asyncHandler(async (req, res) => {
+  const patch = req.body as Partial<ClusterInfo>
+  const updated = memoryStore.updateCluster(req.params.id, {
+    name: patch.name,
+    endpoint: patch.endpoint,
+    credentialId: patch.credentialId,
+    authType: patch.authType,
+  })
+  if (!updated) return fail(res, 404, 'cluster not found')
+  ok(res, updated)
+}))
+
+// 删除集群
+clustersRouter.delete('/:id', requireUser, asyncHandler(async (req, res) => {
+  const removed = memoryStore.removeCluster(req.params.id)
+  if (!removed) return fail(res, 404, 'cluster not found')
+  ok(res, { ok: true })
 }))

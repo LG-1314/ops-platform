@@ -5,10 +5,16 @@ import type { DoloresTool } from '@shared/types'
 
 export const doloresRouter = Router()
 
+// 执行工具（真实操作：进程健康/内存同步/目录清理/日志/定时任务）
 doloresRouter.post('/run', asyncHandler(async (req, res) => {
   const tool =
     req.body && typeof req.body.tool === 'string'
       ? (req.body.tool as DoloresTool)
       : 'health'
   ok(res, doloresService.run(tool))
+}))
+
+// 执行历史（最新在前）
+doloresRouter.get('/history', asyncHandler(async (_req, res) => {
+  ok(res, doloresService.history())
 }))

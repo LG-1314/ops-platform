@@ -45,8 +45,8 @@
 | SSH | ssh2（纯 JS） | ^1.17.0 |
 | DB 连接 | mysql2 / pg / ioredis | ^3.23 / ^8.16 / ^5.8 |
 | K8s | @kubernetes/client-node | ^1.4.0 |
-| 持久化 | better-sqlite3 | ^12.4.1 |
-| 凭据加密 | Electron safeStorage | 内置 |
+| 持久化 | memoryStore（内存 Map）+ JSON 文件（persist.ts 原子写 + 400ms 防抖） | 无数据库（时序独立 metrics.json） |
+| 凭据加密 | Node crypto AES-256-GCM（crypto.ts） | 密钥 ops-key.json（同 dataDir） |
 
 ## 5. API 端点清单（锁定，Phase 2 架构师产出 openapi.yaml）
 
@@ -59,7 +59,7 @@
 | PUT/DELETE | /api/hosts/:id | 更新/删除主机 |
 | POST | /api/hosts/:id/test | 测试 SSH 连接 |
 | POST | /api/hosts/:id/collect | 采集指标 |
-| GET | /api/hosts/:id/metrics | 指标历史（range 查询） |
+| GET | /api/hosts/:id/metrics | 指标历史（range 查询）——**实际落地为 `GET /api/metrics/history?assetId&from&to`**（见增量 1） |
 | GET | /api/hosts/:id/processes | 进程列表 |
 | GET | /api/hosts/:id/logs | 日志拉取 |
 | GET/POST | /api/alert-rules | 告警规则 |

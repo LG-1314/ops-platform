@@ -1,4 +1,4 @@
-import type { KubeConfig, CoreV1Api, AppsV1Api } from '@kubernetes/client-node'
+import type { KubeConfig } from '@kubernetes/client-node'
 import type { ClusterInfo, ClusterDetail, K8sNodeInfo, K8sWorkloadInfo, Status } from '@shared/types'
 import { credentialService } from './credentialService'
 

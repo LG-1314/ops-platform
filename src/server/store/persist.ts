@@ -6,7 +6,6 @@ import os from 'node:os'
 // 不用 better-sqlite3 等原生模块 —— 纯 JS 实现零编译，杜绝 Electron 打包后原生模块
 // 重编译失败导致的白屏/启动崩溃（用户首要诉求是「百分百能运行」）。
 const FILE = 'store.json'
-const TMP = 'store.json.tmp'
 
 function dataDir(): string {
   const d = process.env.OPS_DATA_DIR || path.join(os.homedir(), '.ops-platform')
@@ -18,10 +17,10 @@ function dataDir(): string {
   return d
 }
 
-/** 读取已有 store；不存在或解析失败返回 null（调用方应播种）。 */
-export function loadStore(): unknown | null {
+/** 读取 dataDir 下任意 JSON 文件；不存在或解析失败返回 null。 */
+export function readJSONFile(filename: string): unknown | null {
   try {
-    const p = path.join(dataDir(), FILE)
+    const p = path.join(dataDir(), filename)
     if (fs.existsSync(p)) {
       return JSON.parse(fs.readFileSync(p, 'utf8'))
     }
@@ -29,6 +28,28 @@ export function loadStore(): unknown | null {
     /* ignore */
   }
   return null
+}
+
+/** 原子写 JSON 到 dataDir 下任意文件（先写 .tmp 再 rename，避免半写）。 */
+export function writeJSONAtomic(filename: string, data: unknown): void {
+  const p = path.join(dataDir(), filename)
+  const tmp = path.join(dataDir(), `${filename}.tmp`)
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(data, null, 2))
+    fs.renameSync(tmp, p)
+  } catch (e) {
+    try {
+      // eslint-disable-next-line no-console
+      console.error(`[persist] 保存失败 ${filename}`, e)
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+/** 读取已有 store；不存在或解析失败返回 null（调用方应播种）。 */
+export function loadStore(): unknown | null {
+  return readJSONFile(FILE)
 }
 
 let timer: NodeJS.Timeout | null = null
@@ -52,19 +73,6 @@ export function persistNow(store: unknown): void {
 
 function flush(): void {
   if (pending == null) return
-  const p = path.join(dataDir(), FILE)
-  const tmp = path.join(dataDir(), TMP)
-  try {
-    fs.writeFileSync(tmp, JSON.stringify(pending, null, 2))
-    fs.renameSync(tmp, p) // 原子替换，避免半写文件
-    pending = null
-  } catch (e) {
-    // 落盘失败不致命：内存态仍可用，仅重启后丢失
-    try {
-      // eslint-disable-next-line no-console
-      console.error('[persist] 保存失败', e)
-    } catch {
-      /* ignore */
-    }
-  }
+  writeJSONAtomic(FILE, pending)
+  pending = null
 }

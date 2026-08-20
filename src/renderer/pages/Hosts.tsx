@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Box,
   Paper,
@@ -33,9 +33,12 @@ import {
   MonitorHeart as IconCollect,
   Terminal as IconTerminal,
   Computer as IconHost,
+  ShowChart as IconTrend,
 } from '@mui/icons-material'
 import { api } from '../../capabilities/bus'
-import type { Asset, Credential, HostMetricSample, Status } from '@shared/types'
+import type { Asset, HostMetricSample, Status } from '@shared/types'
+import HostTrendDrawer from '../components/HostTrendDrawer'
+import type { MonitorSummary } from '../../capabilities/bus'
 
 function statusColor(theme: Theme, s: Status): string {
   if (s === 'ok') return theme.palette.success.main
@@ -59,11 +62,25 @@ function MetricBar({ label, pct, theme }: { label: string; pct: number; theme: T
   )
 }
 
+/** 表格内紧凑指标条（实时指标列用） */
+function MiniBar({ label, pct, theme }: { label: string; pct?: number; theme: Theme }) {
+  if (pct == null) return null
+  const color = pct >= 90 ? theme.palette.error.main : pct >= 75 ? theme.palette.warning.main : theme.palette.success.main
+  return (
+    <Stack direction="row" alignItems="center" spacing={0.6} sx={{ minWidth: 96 }}>
+      <Typography variant="caption" color="text.secondary" sx={{ width: 34, fontSize: 10, flexShrink: 0 }}>{label}</Typography>
+      <LinearProgress variant="determinate" value={pct} sx={{ flex: 1, height: 4, borderRadius: 2, '& .MuiLinearProgress-bar': { backgroundColor: color } }} />
+      <Typography variant="caption" sx={{ width: 34, fontSize: 10, fontFamily: 'monospace', color, textAlign: 'right', flexShrink: 0 }}>{pct}%</Typography>
+    </Stack>
+  )
+}
+
 export default function Hosts() {
   const theme = useTheme()
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [hosts, setHosts] = useState<Asset[]>([])
-  const [creds, setCreds] = useState<Credential[]>([])
+  const [metrics, setMetrics] = useState<MonitorSummary['hosts']>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
@@ -71,6 +88,19 @@ export default function Hosts() {
   const [sampleOpen, setSampleOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [collectingId, setCollectingId] = useState('')
+  const [collectingAll, setCollectingAll] = useState(false)
+  const [trendAsset, setTrendAsset] = useState<Asset | null>(null)
+
+  // 来自监控大盘「趋势」快捷入口：?trendId=xxx 自动打开趋势抽屉
+  useEffect(() => {
+    const trendId = searchParams.get('trendId')
+    if (!trendId) return
+    const target = hosts.find((h) => h.id === trendId)
+    if (target) {
+      setTrendAsset(target)
+      setSearchParams((prev) => { const n = new URLSearchParams(prev); n.delete('trendId'); return n }, { replace: true })
+    }
+  }, [searchParams, hosts, setSearchParams])
 
   const [form, setForm] = useState<{
     name: string
@@ -82,15 +112,19 @@ export default function Hosts() {
     privateKey: string
   }>({ name: '', host: '', port: 22, authMethod: 'password', username: '', password: '', privateKey: '' })
 
-  const sshCreds = useMemo(() => creds.filter((c) => c.kind === 'ssh'), [creds])
+  // 最新指标按资产 id 索引（来自 monitor/summary 单接口，避免逐台请求）
+  const metricMap = useMemo(() => new Map(metrics.map((m) => [m.id, m])), [metrics])
 
   async function load() {
     setLoading(true)
     setError(null)
     try {
-      const [h, cr] = await Promise.all([api.assets.list(undefined, 'server'), api.credentials.list()])
+      const [h, mon] = await Promise.all([
+        api.assets.list(undefined, 'server'),
+        api.monitor.summary(),
+      ])
       setHosts(h)
-      setCreds(cr)
+      setMetrics(mon.hosts)
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -106,13 +140,37 @@ export default function Hosts() {
     setError(null)
     setCollectingId(host.id)
     try {
-      const s = await api.ssh.collect({ host: host.host, port: host.port, credentialId: host.credentialId })
+      const s = await api.ssh.collect({ host: host.host, port: host.port, credentialId: host.credentialId, assetId: host.id })
       setSample(s)
       setSampleOpen(true)
+      await load()
     } catch (e) {
       setError((e as Error).message)
     } finally {
       setCollectingId('')
+    }
+  }
+
+  /** 批量采集全部关联了凭据的主机（串行，失败单台不中断） */
+  async function onCollectAll() {
+    const targets = hosts.filter((h) => h.credentialId)
+    if (targets.length === 0) {
+      setError('暂无关联 SSH 凭据的主机，请先为主机配置凭据')
+      return
+    }
+    setCollectingAll(true)
+    setError(null)
+    try {
+      for (const h of targets) {
+        try {
+          await api.ssh.collect({ host: h.host, port: h.port, credentialId: h.credentialId, assetId: h.id })
+        } catch {
+          /* 单台失败继续 */
+        }
+      }
+      await load()
+    } finally {
+      setCollectingAll(false)
     }
   }
 
@@ -185,6 +243,14 @@ export default function Hosts() {
           <Button startIcon={<IconRefresh />} onClick={() => void load()} color="inherit">
             刷新
           </Button>
+          <Button
+            startIcon={collectingAll ? <CircularProgress size={16} /> : <IconCollect />}
+            onClick={() => void onCollectAll()}
+            disabled={collectingAll}
+            color="inherit"
+          >
+            {collectingAll ? '采集中…' : '采集全部'}
+          </Button>
           <Button variant="contained" startIcon={<IconAdd />} onClick={() => setOpen(true)}>
             添加主机
           </Button>
@@ -208,6 +274,7 @@ export default function Hosts() {
               <TableRow>
                 <TableCell>名称</TableCell>
                 <TableCell>地址</TableCell>
+                <TableCell>实时指标</TableCell>
                 <TableCell>凭据</TableCell>
                 <TableCell>状态</TableCell>
                 <TableCell align="right">操作</TableCell>
@@ -216,45 +283,64 @@ export default function Hosts() {
             <TableBody>
               {hosts.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={5} sx={{ color: theme.palette.text.secondary }}>
+                  <TableCell colSpan={6} sx={{ color: theme.palette.text.secondary }}>
                     暂无主机，点击「添加主机」开始纳管。
                   </TableCell>
                 </TableRow>
               )}
-              {hosts.map((h) => (
-                <TableRow key={h.id}>
-                  <TableCell sx={{ fontWeight: 600 }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <IconHost fontSize="small" sx={{ color: theme.palette.primary.main }} />
-                      {h.name}
-                    </Box>
-                  </TableCell>
-                  <TableCell sx={{ fontFamily: 'monospace' }}>
-                    {h.host}:{h.port ?? 22}
-                  </TableCell>
-                  <TableCell>{h.credentialId ? '已关联' : '无'}</TableCell>
-                  <TableCell>
-                    <StatusBadgeInline s={h.reachable ? 'ok' : 'unknown'} label={h.reachable ? '在线' : '未探测'} theme={theme} />
-                  </TableCell>
-                  <TableCell align="right">
-                    <Tooltip title="采集指标">
-                      <IconButton size="small" onClick={() => void onCollect(h)} disabled={collectingId === h.id}>
-                        {collectingId === h.id ? <CircularProgress size={16} /> : <IconCollect fontSize="small" />}
-                      </IconButton>
-                    </Tooltip>
-                    <Tooltip title="终端">
-                      <IconButton size="small" onClick={() => goTerminal(h)}>
-                        <IconTerminal fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
-                    <Tooltip title="删除">
-                      <IconButton size="small" onClick={() => void onDelete(h.id)}>
-                        <IconDelete fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
-                  </TableCell>
-                </TableRow>
-              ))}
+              {hosts.map((h) => {
+                const m = metricMap.get(h.id)
+                return (
+                  <TableRow key={h.id}>
+                    <TableCell sx={{ fontWeight: 600 }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <IconHost fontSize="small" sx={{ color: theme.palette.primary.main }} />
+                        {h.name}
+                      </Box>
+                    </TableCell>
+                    <TableCell sx={{ fontFamily: 'monospace' }}>
+                      {h.host}:{h.port ?? 22}
+                    </TableCell>
+                    <TableCell sx={{ py: 0.5 }}>
+                      {m ? (
+                        <Stack spacing={0.4}>
+                          <MiniBar label="CPU" pct={m.cpuPct} theme={theme} />
+                          <MiniBar label="内存" pct={m.memPct} theme={theme} />
+                          <MiniBar label="磁盘" pct={m.diskPct} theme={theme} />
+                        </Stack>
+                      ) : (
+                        <Typography variant="caption" color="text.secondary">未采集</Typography>
+                      )}
+                    </TableCell>
+                    <TableCell>{h.credentialId ? '已关联' : '无'}</TableCell>
+                    <TableCell>
+                      <StatusBadgeInline s={h.reachable ? 'ok' : h.reachable === false ? 'error' : 'unknown'} label={h.reachable ? '在线' : h.reachable === false ? '离线' : '未探测'} theme={theme} />
+                    </TableCell>
+                    <TableCell align="right">
+                      <Tooltip title="趋势">
+                        <IconButton size="small" onClick={() => setTrendAsset(h)}>
+                          <IconTrend fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                      <Tooltip title="采集指标">
+                        <IconButton size="small" onClick={() => void onCollect(h)} disabled={collectingId === h.id}>
+                          {collectingId === h.id ? <CircularProgress size={16} /> : <IconCollect fontSize="small" />}
+                        </IconButton>
+                      </Tooltip>
+                      <Tooltip title="终端">
+                        <IconButton size="small" onClick={() => goTerminal(h)}>
+                          <IconTerminal fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                      <Tooltip title="删除">
+                        <IconButton size="small" onClick={() => void onDelete(h.id)}>
+                          <IconDelete fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
             </TableBody>
           </Table>
         )}
@@ -332,6 +418,9 @@ export default function Hosts() {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* 趋势抽屉 */}
+      <HostTrendDrawer open={!!trendAsset} asset={trendAsset} onClose={() => setTrendAsset(null)} />
 
       {/* 指标详情 */}
       <Dialog open={sampleOpen} onClose={() => setSampleOpen(false)} maxWidth="sm" fullWidth>

@@ -1,201 +1,74 @@
 classDiagram
-    direction LR
-
-    class ApiBus {
-        <<frontend client>>
-        +assets
-        +diagnostics
-        +dashboard
-        +knowledge
-        +relations
-        +patrols
-        +alerts
-        +reports
-        +automation
-        +clusters
-        +guardrails
-        +dolores
-        +request(path, init) T
-    }
-
-    class ExpressApp {
-        <<node express>>
-        +startServer(port) Server
-        +mountRoutes()
-        +serveStatic(dist)
-    }
-
-    class MemoryStore {
-        <<singleton in-memory>>
-        -assets: Asset[]
-        -alerts: Alert[]
-        -patrols: PatrolTask[]
-        -incidents: Incident[]
-        -clusters: ClusterInfo[]
-        +getAssets() Asset[]
-        +saveAsset(a) void
-        +getAlerts() Alert[]
-        +getPatrols() PatrolTask[]
-    }
-
-    class DiagnosticService {
-        +run(assetId?) DiagnoseResult
-        +history(assetId?) DiagnoseResult[]
-    }
-    class KnowledgeService {
-        +search(q) KnowledgeHit[]
-        +related(asset) RelatedProject[]
-    }
-    class DashboardService {
-        +summarize() DashboardSummary
-    }
-    class AssetService {
-        +list(q) Asset[]
-        +create(a) Asset
-        +discover() Asset
-    }
-    class PatrolService {
-        +list() PatrolTask[]
-        +run(id) PatrolRun
-    }
-    class AlertService {
-        +list(filter) Alert[]
-        +patch(id, p) Alert
-    }
-    class ReportService {
-        +export(req) ReportResult
-    }
-    class AutomationService {
-        +incidents() Incident[]
-        +cicd() CicdPipeline[]
-    }
-    class ClusterService {
-        +list() ClusterInfo[]
-        +detail(id) ClusterDetail
-        +scan(id) ClusterDetail
-    }
-    class GuardrailService {
-        +check(scope) GuardrailResult
-    }
-    class DoloresService {
-        +run(tool) DoloresResult
-    }
-
-    class DiagnosticsEngine {
-        <<reuse engine.ts>>
-        +diagnose() DiagnoseResult
-    }
-    class KnowledgeBase {
-        <<reuse knowledge.mjs>>
-        +searchKnowledge(q) FAQ[]
-        +relatedProjects(asset) Project[]
-    }
-
-    class DiagnoseResult {
-        platform: string
-        host: string
-        timestamp: string
-        metrics: Metric[]
-        suggestions: string[]
-    }
-    class Asset {
-        id: string
-        name: string
-        type: string
-        host: string
-        status: Status
-        healthScore: number
-    }
-    class Alert {
-        id: string
-        level: string
-        title: string
-        state: string
-        assetId: string
-    }
-    class PatrolTask {
-        id: string
-        name: string
-        layers: string[]
-        cron: string
-        enabled: boolean
-        status: string
-    }
-    class KnowledgeHit {
-        id: string
-        title: string
-        content: string
-        source: string
-        tags: string[]
-    }
-    class RelatedProject {
-        asset: string
-        project: string
-        ticket: string
-        knowledge: string
-        note: string
-    }
-    class DashboardSummary {
-        totalAssets: number
-        healthDistribution: Record~Status,number~
-        activeAlerts: number
-        assets: AssetHealthRow[]
-        recentAlerts: Alert[]
-    }
-    class Incident {
-        id: string
-        title: string
-        state: string
-        level: string
-        assetId: string
-    }
-    class ClusterDetail {
-        cluster: ClusterInfo
-        nodes: ClusterNode[]
-        workloads: ClusterWorkload[]
-        agents: AgentStatus[]
-    }
-    class GuardrailResult {
-        id: string
-        scope: string
-        checks: GuardrailCheck[]
-        riskItems: number
-        passed: boolean
-    }
-    class DoloresResult {
-        tool: string
-        status: Status
-        logs: string[]
-        executedAt: string
-    }
-    class ReportResult {
-        format: string
-        filename: string
-        content: string
-        generatedAt: string
-    }
-
-    ApiBus ..> ExpressApp : HTTP /api/*
-    ExpressApp *-- DiagnosticService
-    ExpressApp *-- KnowledgeService
-    ExpressApp *-- DashboardService
-    ExpressApp *-- AssetService
-    ExpressApp *-- PatrolService
-    ExpressApp *-- AlertService
-    ExpressApp *-- ReportService
-    ExpressApp *-- AutomationService
-    ExpressApp *-- ClusterService
-    ExpressApp *-- GuardrailService
-    ExpressApp *-- DoloresService
-
-    DiagnosticService --> DiagnosticsEngine : diagnose()
-    KnowledgeService --> KnowledgeBase : search/related
-    DiagnosticService ..> DiagnoseResult : returns
-    DashboardService --> MemoryStore : read
-    AssetService --> MemoryStore : read/write
-    AlertService --> MemoryStore : read/write
-    PatrolService --> MemoryStore : read/write
-    DashboardService --> AssetService : aggregate
-    DashboardService --> AlertService : aggregate
-    ReportService --> DiagnosticService : build
-    ReportService --> DashboardService : build
+  class HostMetricSample {
+    +string assetId
+    +string collectedAt
+    +string hostname
+    +number cpuIdle
+    +number memUsedMb
+    +number memTotalMb
+    +DiskUsage[] disk
+    +NetSample network
+    +Status status
+  }
+  class NetSample {
+    +number rxBytes
+    +number txBytes
+    +number rxRate
+    +number txRate
+  }
+  class NotificationChannel {
+    +string id
+    +string name
+    +NotificationChannelType type
+    +boolean enabled
+    +string url
+    +string secretEnc
+    +string smtpHost
+    +number smtpPort
+    +boolean smtpSecure
+    +string smtpUser
+    +string smtpPasswordEnc
+    +string smtpFrom
+    +string smtpTo
+  }
+  class MetricSeriesStore {
+    -Map~string,HostMetricSample[]~ series
+    -number MAX_POINTS
+    +push(sample) void
+    +query(assetId, from, to, maxPoints) HostMetricSample[]
+    +getLatest(assetId) HostMetricSample
+    +load() void
+    +save() void
+    -downsample(samples, max) HostMetricSample[]
+  }
+  class MetricCollector {
+    -number INTERVAL_MS
+    -number CONCURRENCY
+    +start() Timer
+    +stop() void
+    +collectAsset(assetId) Promise~void~
+  }
+  class NotificationService {
+    +list() NotificationChannel[]
+    +create(input) NotificationChannel
+    +update(id, input) NotificationChannel
+    +remove(id) boolean
+    +notify(alert) Promise~number~
+    -sendEmail(channel, text) Promise~boolean~
+    -sendWebhook(channel, text) Promise~boolean~
+  }
+  class Crypto {
+    +encrypt(plain) string
+    +decrypt(b64) string
+  }
+  class Persist {
+    +scheduleFileWrite(file, data) void
+    +readFileJSON(file) unknown
+    +flushFile(file) void
+  }
+  HostMetricSample *-- NetSample
+  MetricCollector ..> HostMetricSample : produces
+  MetricCollector ..> MetricSeriesStore : push
+  MetricSeriesStore ..> Persist : save / load
+  NotificationService ..> Crypto : encrypt / decrypt
+  MetricsRouter ..> MetricSeriesStore : query

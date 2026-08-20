@@ -9,15 +9,42 @@ import {
   Alert,
   TextField,
   MenuItem,
-  CircularProgress,
   Chip,
 } from '@mui/material'
 import { useTheme } from '@mui/material/styles'
 import { Terminal as IconTerminal, LinkOff as IconDisconnect, PlayArrow as IconConnect } from '@mui/icons-material'
-import { terminalWsUrl, api } from '../../capabilities/bus'
+import { Terminal as XTerm } from '@xterm/xterm'
+import { FitAddon } from '@xterm/addon-fit'
+import '@xterm/xterm/css/xterm.css'
+import { terminalWsUrl, api, USER_TOKEN_KEY } from '../../capabilities/bus'
 import type { Credential } from '@shared/types'
 
 type ConnState = 'idle' | 'connecting' | 'open' | 'closed' | 'error'
+
+// 深色主题下 xterm 专用配色：与全局深色背景 #0B0E14 / #141923 对齐
+const XTERM_THEME = {
+  background: '#0B0E14',
+  foreground: '#D6E1F5',
+  cursor: '#3D7BFF',
+  cursorAccent: '#0B0E14',
+  selectionBackground: 'rgba(61,123,255,0.35)',
+  black: '#1B2333',
+  red: '#F87171',
+  green: '#34D399',
+  yellow: '#F59E0B',
+  blue: '#60A5FA',
+  magenta: '#C084FC',
+  cyan: '#22D3EE',
+  white: '#D6E1F5',
+  brightBlack: '#5C6B8A',
+  brightRed: '#FCA5A5',
+  brightGreen: '#6EE7B7',
+  brightYellow: '#FCD34D',
+  brightBlue: '#93C5FD',
+  brightMagenta: '#D8B4FE',
+  brightCyan: '#67E8F9',
+  brightWhite: '#FFFFFF',
+}
 
 export default function Terminal() {
   const theme = useTheme()
@@ -35,16 +62,74 @@ export default function Terminal() {
   const [formName, setFormName] = useState(name)
 
   const [connState, setConnState] = useState<ConnState>(host ? 'connecting' : 'idle')
-  const [output, setOutput] = useState('')
-  const [input, setInput] = useState('')
   const [error, setError] = useState<string | null>(null)
 
   const wsRef = useRef<WebSocket | null>(null)
-  const scrollRef = useRef<HTMLDivElement | null>(null)
-  const termRef = useRef<HTMLDivElement | null>(null)
-  const dimsRef = useRef({ cols: 80, rows: 24 })
+  const termRef = useRef<XTerm | null>(null)
+  const fitRef = useRef<FitAddon | null>(null)
+  const containerRef = useRef<HTMLDivElement | null>(null)
+  const tokenRef = useRef<string>('')
 
-  // 加载 SSH 凭据，供手动连接时选择
+  // 初始化 xterm 实例（仅一次）
+  useEffect(() => {
+    if (termRef.current || !containerRef.current) return
+    const term = new XTerm({
+      cursorBlink: true,
+      fontSize: 13,
+      fontFamily: 'JetBrains Mono, Menlo, Consolas, monospace',
+      lineHeight: 1.2,
+      scrollback: 5000,
+      convertEol: false,
+      theme: XTERM_THEME,
+    })
+    const fit = new FitAddon()
+    term.loadAddon(fit)
+    term.open(containerRef.current)
+    try {
+      fit.fit()
+    } catch {
+      /* 容器尺寸未定，等 ResizeObserver 再 fit */
+    }
+    termRef.current = term
+    fitRef.current = fit
+
+    // 用户键盘输入 → WS
+    term.onData((data) => {
+      const ws = wsRef.current
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send(data)
+    })
+
+    const ro = new ResizeObserver(() => {
+      try {
+        fit.fit()
+        const ws = wsRef.current
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }))
+        }
+      } catch {
+        /* ignore */
+      }
+    })
+    ro.observe(containerRef.current)
+    return () => {
+      ro.disconnect()
+      term.dispose()
+      termRef.current = null
+      fitRef.current = null
+    }
+  }, [])
+
+  // 取回能力总线令牌（终端 WS 鉴权用）
+  const getToken = async (): Promise<string> => {
+    if (tokenRef.current) return tokenRef.current
+    try {
+      tokenRef.current = (await window.opsApi?.token?.()) || ''
+    } catch {
+      tokenRef.current = ''
+    }
+    return tokenRef.current
+  }
+
   useEffect(() => {
     api.credentials
       .list()
@@ -52,58 +137,49 @@ export default function Terminal() {
       .catch(() => {})
   }, [])
 
-  // 自动滚动到底部
-  useEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
-  }, [output])
-
-  // 估算终端尺寸并发送 resize
-  useEffect(() => {
-    const el = termRef.current
-    if (!el) return
-    const measure = () => {
-      const cs = getComputedStyle(el)
-      const fontSize = parseFloat(cs.fontSize) || 13
-      const lineHeight = parseFloat(cs.lineHeight) || fontSize * 1.5
-      const charWidth = fontSize * 0.6
-      const cols = Math.max(20, Math.floor(el.clientWidth / charWidth))
-      const rows = Math.max(8, Math.floor(el.clientHeight / lineHeight))
-      if (cols !== dimsRef.current.cols || rows !== dimsRef.current.rows) {
-        dimsRef.current = { cols, rows }
-        const ws = wsRef.current
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'resize', cols, rows }))
-        }
-      }
-    }
-    measure()
-    const ro = new ResizeObserver(measure)
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [connState])
-
-  function connect(h: string, p: string, cid: string, n: string) {
+  async function connect(h: string, p: string, cid: string, n: string) {
     setError(null)
-    setOutput('')
     setConnState('connecting')
-    const url = terminalWsUrl({ host: h, port: p, credentialId: cid || undefined, cols: dimsRef.current.cols, rows: dimsRef.current.rows })
+    const term = termRef.current
+    term?.reset()
+    term?.writeln(`\x1b[90m正在连接 ${n || h}:${p || 22} …\x1b[0m`)
+
+    const token = await getToken()
+    let userToken = ''
+    try {
+      userToken = localStorage.getItem(USER_TOKEN_KEY) || ''
+    } catch {
+      userToken = ''
+    }
+    const cols = term?.cols || 80
+    const rows = term?.rows || 24
+    const url = terminalWsUrl({ host: h, port: p, credentialId: cid || undefined, cols, rows }, token, userToken)
     let ws: WebSocket
     try {
       ws = new WebSocket(url)
     } catch (e) {
       setConnState('error')
       setError((e as Error).message)
+      term?.writeln('\x1b[31m[终端] 无法建立连接\x1b[0m')
       return
     }
     wsRef.current = ws
-    ws.onopen = () => setConnState('open')
-    ws.onmessage = (ev) => setOutput((o) => o + ev.data)
+
+    ws.onopen = () => {
+      setConnState('open')
+      // 服务端 shell 建立后首帧回显会包含尺寸信息；主动同步一次尺寸
+      ws.send(JSON.stringify({ type: 'resize', cols, rows }))
+    }
+    ws.onmessage = (ev) => {
+      term?.write(ev.data as string)
+    }
     ws.onerror = () => {
       setConnState('error')
     }
     ws.onclose = () => {
       setConnState('closed')
-      setOutput((o) => o + '\r\n[连接已关闭]\r\n')
+      term?.writeln('\r\n\x1b[90m[连接已关闭]\x1b[0m\r\n')
+      wsRef.current = null
     }
     setParams(
       (prev) => {
@@ -119,11 +195,8 @@ export default function Terminal() {
     )
   }
 
-  // 带 host 参数时自动连接
   useEffect(() => {
-    if (host) {
-      connect(host, port, credentialId, name)
-    }
+    if (host) connect(host, port, credentialId, name)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -135,14 +208,6 @@ export default function Terminal() {
     }
     wsRef.current = null
     setConnState('closed')
-  }
-
-  function sendLine() {
-    const ws = wsRef.current
-    if (!ws || ws.readyState !== WebSocket.OPEN) return
-    const line = input
-    ws.send(line + '\n')
-    setInput('')
   }
 
   function onManualConnect() {
@@ -157,10 +222,10 @@ export default function Terminal() {
     connState === 'open'
       ? theme.palette.success.main
       : connState === 'connecting'
-      ? theme.palette.warning.main
-      : connState === 'error' || connState === 'closed'
-      ? theme.palette.error.main
-      : theme.palette.text.secondary
+        ? theme.palette.warning.main
+        : connState === 'error' || connState === 'closed'
+          ? theme.palette.error.main
+          : theme.palette.text.secondary
 
   return (
     <Box>
@@ -170,7 +235,7 @@ export default function Terminal() {
             SSH 终端
           </Typography>
           <Typography variant="body2" sx={{ color: theme.palette.text.secondary }}>
-            经由能力总线桥接到目标主机 shell，输入随行发送
+            经由能力总线桥接到目标主机 shell（xterm-256color 全功能终端）
           </Typography>
         </Box>
         <Chip
@@ -179,12 +244,12 @@ export default function Terminal() {
             connState === 'open'
               ? '已连接'
               : connState === 'connecting'
-              ? '连接中…'
-              : connState === 'error'
-              ? '连接错误'
-              : connState === 'closed'
-              ? '已断开'
-              : '未连接'
+                ? '连接中…'
+                : connState === 'error'
+                  ? '连接错误'
+                  : connState === 'closed'
+                    ? '已断开'
+                    : '未连接'
           }
           sx={{ bgcolor: stateColor + '22', color: stateColor, border: `1px solid ${stateColor}` }}
         />
@@ -229,55 +294,26 @@ export default function Terminal() {
           overflow: 'hidden',
           display: 'flex',
           flexDirection: 'column',
-          height: '64vh',
+          height: '68vh',
           bgcolor: '#0B0E14',
           border: `1px solid ${theme.palette.divider}`,
         }}
       >
+        <Box ref={containerRef} sx={{ flex: 1, p: 1, minHeight: 0 }} />
         <Box
-          ref={scrollRef}
           sx={{
-            flex: 1,
-            overflowY: 'auto',
-            p: 1.5,
-            fontFamily: 'JetBrains Mono, Menlo, Consolas, monospace',
-            fontSize: 13,
-            lineHeight: 1.5,
-            color: '#D6E1F5',
-            whiteSpace: 'pre-wrap',
-            wordBreak: 'break-word',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 1,
+            p: 1,
+            borderTop: `1px solid ${theme.palette.divider}`,
+            bgcolor: '#0E1320',
           }}
         >
-          {connState === 'connecting' && (
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, color: '#8A98B8' }}>
-              <CircularProgress size={14} /> 正在连接 {name || host} …
-            </Box>
-          )}
-          {output}
-        </Box>
-        <Box ref={termRef} sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderTop: `1px solid ${theme.palette.divider}`, bgcolor: '#0E1320' }}>
           <IconTerminal fontSize="small" sx={{ color: '#5C6B8A' }} />
-          <input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault()
-                sendLine()
-              }
-            }}
-            disabled={connState !== 'open'}
-            placeholder={connState === 'open' ? '输入命令后回车执行…' : '未连接'}
-            style={{
-              flex: 1,
-              background: 'transparent',
-              border: 'none',
-              outline: 'none',
-              color: '#D6E1F5',
-              fontFamily: 'JetBrains Mono, Menlo, Consolas, monospace',
-              fontSize: 13,
-            }}
-          />
+          <Typography variant="caption" color="text.secondary" sx={{ flex: 1 }}>
+            {connState === 'open' ? '已连接，直接键入命令执行（支持全屏终端程序如 vim/top）' : '未连接'}
+          </Typography>
           {connState === 'open' ? (
             <Button size="small" color="error" startIcon={<IconDisconnect />} onClick={disconnect}>
               断开

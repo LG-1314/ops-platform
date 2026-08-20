@@ -1,3 +1,6 @@
+> ⚠️ **DEPRECATED（已过时）**：本文件与当前代码实现存在较大偏差（light 主题 / emoji 状态 / 无 ssh·db·cloud / 计划中的 router.tsx·appStore 均未落地），已不再是单一真源。当前以 **`docs/Spec.md`** 为活跃规范；一切以代码为准。历史审查见 `docs/全维度检查与理解报告.md`、修复见 `docs/修复实施记录.md`。
+>
+
 # 企业级运维服务器全维度管理平台 — 系统架构设计 + 任务分解
 
 > 架构师：高见远（Bob）｜ 形态：Electron 桌面壳 + Vite 本地预览 + Node/Express 能力总线 + React 前端

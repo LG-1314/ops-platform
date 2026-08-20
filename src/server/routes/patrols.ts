@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { asyncHandler, ok, fail } from '../utils/response'
 import { patrolService } from '../services/patrolService'
+import { logger } from '../utils/logger'
 import type { PatrolTask } from '@shared/types'
 
 export const patrolsRouter = Router()
@@ -35,6 +36,7 @@ patrolsRouter.post('/:id/run', asyncHandler(async (req, res) => {
   try {
     ok(res, patrolService.run(req.params.id))
   } catch (e) {
-    fail(res, 404, (e as Error).message)
+    logger.error(`[patrols] run failed: ${e instanceof Error ? e.stack || e.message : String(e)}`)
+    fail(res, 404, '巡检任务不存在或运行失败')
   }
 }))

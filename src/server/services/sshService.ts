@@ -1,6 +1,7 @@
 import { Client, type ClientChannel } from 'ssh2'
-import type { HostMetricSample, Status, DiskUsage } from '@shared/types'
+import type { HostMetricSample, DiskUsage, NetSample } from '@shared/types'
 import { setLatest } from './hostMetricsCache'
+import { metricSeriesStore } from '../store/metricSeriesStore'
 
 export interface SshConnectParams {
   host: string
@@ -63,7 +64,24 @@ export function runCommand(client: Client, cmd: string, timeoutMs = 8000): Promi
   })
 }
 
-function parseMetrics(host: string, uptimeOut: string, freeOut: string, dfOut: string): HostMetricSample {
+function parseNet(netOut: string): NetSample | undefined {
+  // /proc/net/dev：聚合所有非 lo 接口的累计收发字节（列 2 = rx，列 9 = tx）
+  // 多接口聚合：服务器常有多网卡（eth0/eth1/br0），取总和更能反映整机吞吐。
+  let rx = 0
+  let tx = 0
+  let found = false
+  for (const line of netOut.split('\n')) {
+    const m = line.trim().match(/^([a-zA-Z0-9._-]+):\s+(\d+)\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+(\d+)/)
+    if (m && m[1] !== 'lo') {
+      rx += Number(m[2])
+      tx += Number(m[3])
+      found = true
+    }
+  }
+  return found ? { rxBytes: rx, txBytes: tx } : undefined
+}
+
+function parseMetrics(host: string, uptimeOut: string, freeOut: string, dfOut: string, cpuOut: string, netOut: string): HostMetricSample {
   const now = new Date().toISOString()
   const sample: HostMetricSample = {
     assetId: host,
@@ -93,6 +111,23 @@ function parseMetrics(host: string, uptimeOut: string, freeOut: string, dfOut: s
       sample.memFreeMb = nums[2]
     }
   }
+  // Swap 行（可选）
+  const swapLine = freeOut.split('\n').find((l) => l.startsWith('Swap:'))
+  if (swapLine) {
+    const snums = swapLine.replace(/Swap:/, '').trim().split(/\s+/).map(Number)
+    if (snums.length >= 2) sample.swapUsedMb = snums[1]
+  }
+
+  // top -bn1 取平均 CPU 行：%Cpu(s):  us, sy, ni, id, wa, hi, si, st
+  const cpu = cpuOut.match(/%Cpu\(s\):\s*([\d.]+)\s*us,\s*([\d.]+)\s*sy,[\s\S]*?([\d.]+)\s*id/)
+  if (cpu) {
+    sample.cpuUser = parseFloat(cpu[1])
+    sample.cpuSystem = parseFloat(cpu[2])
+    sample.cpuIdle = parseFloat(cpu[3])
+  }
+
+  const net = parseNet(netOut)
+  if (net) sample.network = net
 
   // df -P -B1（字节）：Filesystem 1024-blocks Used Available Capacity Mounted
   const lines = dfOut.split('\n').filter((l) => l.trim().length > 0)
@@ -112,21 +147,39 @@ function parseMetrics(host: string, uptimeOut: string, freeOut: string, dfOut: s
     sample.disk.push(disk)
   }
 
-  if (!load && !memLine && sample.disk.length === 0) sample.status = 'unknown'
+  if (!load && !memLine && !cpu && sample.disk.length === 0) sample.status = 'unknown'
   return sample
 }
 
 /** 一次性采集主机指标（CPU/内存/磁盘/负载），结果写入缓存并返回。 */
-export async function collectMetrics(params: SshConnectParams): Promise<HostMetricSample> {
+export async function collectMetrics(params: SshConnectParams, assetId?: string): Promise<HostMetricSample> {
   const client = await connectSsh(params)
   try {
-    const [uptimeOut, freeOut, dfOut] = await Promise.all([
+    const [uptimeOut, freeOut, dfOut, cpuOut, netOut] = await Promise.all([
       runCommand(client, 'uptime 2>/dev/null', 6000).catch(() => ''),
       runCommand(client, 'free -m 2>/dev/null || free -b 2>/dev/null', 6000).catch(() => ''),
       runCommand(client, "df -P -B1 2>/dev/null | grep -v Filesystem", 6000).catch(() => ''),
+      // 平均 CPU 行；top 缺失时捕获空串，cpuIdle 保持 undefined，告警规则自动跳过（不报错）
+      runCommand(client, "top -bn1 2>/dev/null | grep -i 'Cpu(s)' | head -1", 6000).catch(() => ''),
+      // 网络累计字节（Linux 专属）；缺失/非 Linux 静默跳过
+      runCommand(client, 'cat /proc/net/dev 2>/dev/null', 6000).catch(() => ''),
     ])
-    const sample = parseMetrics(params.host, uptimeOut, freeOut, dfOut)
+    const sample = parseMetrics(assetId || params.host, uptimeOut, freeOut, dfOut, cpuOut, netOut)
+    // 网络速率：与上一次采样差分（KB/s），需同资产累计字节才有意义
+    if (sample.network?.rxBytes != null && sample.network?.txBytes != null) {
+      const prev = metricSeriesStore.getLatest(assetId || params.host)
+      if (prev?.network?.rxBytes != null && prev.network.txBytes != null) {
+        const dtMs = Date.parse(sample.collectedAt) - Date.parse(prev.collectedAt)
+        if (dtMs > 0) {
+          sample.network.rxRateKbps =
+            Math.round(((sample.network.rxBytes - prev.network.rxBytes) / dtMs) * 1000) / 1024
+          sample.network.txRateKbps =
+            Math.round(((sample.network.txBytes - prev.network.txBytes) / dtMs) * 1000) / 1024
+        }
+      }
+    }
     setLatest(sample)
+    metricSeriesStore.push(sample)
     return sample
   } finally {
     client.end()

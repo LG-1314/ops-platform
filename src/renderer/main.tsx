@@ -1,10 +1,9 @@
 import React, { useEffect, useState } from 'react'
 import ReactDOM from 'react-dom/client'
-import { ThemeProvider } from '@mui/material/styles'
 import { CacheProvider } from '@emotion/react'
 import createCache from '@emotion/cache'
 import { HashRouter } from 'react-router-dom'
-import { buildTheme } from './theme/theme'
+import { ThemeModeProvider } from './state/ThemeModeProvider'
 import App from './App'
 import ErrorBoundary from './components/ErrorBoundary'
 
@@ -78,14 +77,14 @@ function RenderProbe() {
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>
     <CacheProvider value={muiCache}>
-      <ThemeProvider theme={buildTheme('dark')}>
+      <ThemeModeProvider>
         <HashRouter>
           <ErrorBoundary>
             <App />
             <RenderProbe />
           </ErrorBoundary>
         </HashRouter>
-      </ThemeProvider>
+      </ThemeModeProvider>
     </CacheProvider>
   </React.StrictMode>
 )

@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { asyncHandler, ok, fail } from '../utils/response'
 import { automationService } from '../services/automationService'
-import type { Incident, IncidentState } from '@shared/types'
+import type { Incident, IncidentState, CicdPipeline } from '@shared/types'
 
 export const automationRouter = Router()
 
@@ -22,6 +22,31 @@ automationRouter.patch('/incidents/:id', asyncHandler(async (req, res) => {
   ok(res, i)
 }))
 
+automationRouter.delete('/incidents/:id', asyncHandler(async (req, res) => {
+  const removed = automationService.removeIncident(req.params.id)
+  if (!removed) return fail(res, 404, 'incident not found')
+  ok(res, { ok: true })
+}))
+
+// CI/CD 流水线台账（真实 CRUD）
 automationRouter.get('/cicd', asyncHandler(async (_req, res) => {
   ok(res, automationService.cicd())
+}))
+
+automationRouter.post('/cicd', asyncHandler(async (req, res) => {
+  const b = req.body as Partial<CicdPipeline>
+  if (!b?.name) return fail(res, 400, 'name required')
+  ok(res, automationService.upsertPipeline(b))
+}))
+
+automationRouter.patch('/cicd/:id', asyncHandler(async (req, res) => {
+  const i = automationService.patchPipeline(req.params.id, req.body as Partial<CicdPipeline>)
+  if (!i) return fail(res, 404, 'pipeline not found')
+  ok(res, i)
+}))
+
+automationRouter.delete('/cicd/:id', asyncHandler(async (req, res) => {
+  const removed = automationService.removePipeline(req.params.id)
+  if (!removed) return fail(res, 404, 'pipeline not found')
+  ok(res, { ok: true })
 }))

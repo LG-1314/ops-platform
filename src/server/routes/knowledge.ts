@@ -11,9 +11,28 @@ knowledgeRouter.get('/search', asyncHandler(async (req, res) => {
   ok(res, knowledgeService.search(q))
 }))
 
-// 自维护知识创建（P2 占位）
+// 自维护知识列表
+knowledgeRouter.get('/', asyncHandler(async (_req, res) => {
+  ok(res, knowledgeService.listLocal())
+}))
+
+// 自维护知识创建
 knowledgeRouter.post('/', asyncHandler(async (req, res) => {
   ok(res, knowledgeService.create(req.body as Partial<KnowledgeHit>))
+}))
+
+// 自维护知识更新
+knowledgeRouter.put('/:id', asyncHandler(async (req, res) => {
+  const k = knowledgeService.update(req.params.id, req.body as Partial<KnowledgeHit>)
+  if (!k) return fail(res, 404, 'knowledge not found')
+  ok(res, k)
+}))
+
+// 自维护知识删除
+knowledgeRouter.delete('/:id', asyncHandler(async (req, res) => {
+  const removed = knowledgeService.remove(req.params.id)
+  if (!removed) return fail(res, 404, 'knowledge not found')
+  ok(res, { ok: true })
 }))
 
 // 自维护知识详情

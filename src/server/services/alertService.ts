@@ -33,9 +33,13 @@ export const alertService = {
     return memoryStore.addAlert(alert)
   },
 
-  /** 状态流转：active -> ack/silenced/resolved */
+  /** 状态流转：active -> ack/silenced/resolved；写入 updatedAt，resolved 时记 resolvedAt */
   patch(id: string, patch: { state: AlertState; ackedBy?: string }): Alert | undefined {
-    return memoryStore.updateAlert(id, patch)
+    const now = new Date().toISOString()
+    const p: Partial<Alert> = { ...patch, updatedAt: now }
+    if (patch.state === 'resolved') p.resolvedAt = now
+    if (patch.state !== 'resolved') p.resolvedAt = undefined // 重新激活/确认后清除旧解决时间
+    return memoryStore.updateAlert(id, p)
   },
 
   remove(id: string): boolean {

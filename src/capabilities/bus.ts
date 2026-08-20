@@ -7,11 +7,17 @@ declare global {
   interface Window {
     opsApi?: {
       apiBase?: string
-      request?: (method: string, path: string, body?: unknown) => Promise<unknown>
+      token?: () => Promise<string>
+      request?: (method: string, path: string, body?: unknown, userToken?: string) => Promise<unknown>
     }
   }
 }
 const API_BASE = window.opsApi?.apiBase || 'http://127.0.0.1:8787/api'
+
+// RBAC 会话 token 的 localStorage 键（登录后写入，request 自动携带）
+export const USER_TOKEN_KEY = 'ops-user-token'
+export const USER_INFO_KEY = 'ops-user-info'
+export const USER_TOKEN_HEADER = 'x-ops-user-token'
 import type {
   ApiResponse,
   ApiError,
@@ -25,30 +31,30 @@ import type {
   Alert,
   AlertLevel,
   AlertState,
-  ReportRequest,
-  ReportResult,
   Incident,
   CicdPipeline,
   IncidentState,
   ClusterInfo,
   ClusterDetail,
   GuardrailResult,
+  GuardrailRun,
   DoloresResult,
+  DoloresRun,
   DoloresTool,
   DashboardSummary,
   Credential,
-  CredentialKind,
   HostMetricSample,
   DbConnection,
   DbHealth,
-  DbType,
   CloudAccount,
-  CloudProvider,
   CloudResource,
   AlertRule,
-  AlertMetric,
-  AlertOperator,
   CreateCredentialInput,
+  NotificationChannel,
+  SafeUser,
+  UserRole,
+  HealthPoint,
+  Status,
 } from '@shared/types'
 
 class ApiClientError extends Error {
@@ -79,10 +85,31 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const method = (init?.method || 'GET').toUpperCase()
   const body = init?.body ? JSON.parse(init.body as string) : undefined
   const rpc = window.opsApi?.request
-  if (!rpc) {
-    throw new ApiClientError({ code: -1, message: 'opsApi.request 不可用（preload 未注入）' })
+  // RBAC 会话：本地保存的登录 token 随请求透传（x-ops-user-token）
+  let userToken: string | undefined
+  try {
+    userToken = localStorage.getItem(USER_TOKEN_KEY) || undefined
+  } catch {
+    /* ignore */
   }
-  const res = (await rpc(method, path, body)) as ApiResponse<T> & Partial<ApiError>
+  if (!rpc) {
+    // 降级：纯浏览器开发预览（无 Electron preload），直接 fetch 同源 /api（Vite 代理）
+    const headers: Record<string, string> = { ...(init?.headers as Record<string, string> | undefined) }
+    if (init?.body && !headers['Content-Type']) headers['Content-Type'] = 'application/json'
+    if (userToken) headers[USER_TOKEN_HEADER] = userToken
+    const res = await fetch(`${API_BASE}${path}`, { ...init, headers })
+    let json: ApiResponse<T> & Partial<ApiError>
+    try {
+      json = (await res.json()) as ApiResponse<T> & Partial<ApiError>
+    } catch {
+      throw new ApiClientError({ code: res.status, message: `HTTP ${res.status}`, detail: '响应非 JSON' })
+    }
+    if (json.code !== 0) {
+      throw new ApiClientError({ code: json.code, message: json.message, detail: json.detail })
+    }
+    return json.data as T
+  }
+  const res = (await rpc(method, path, body, userToken)) as ApiResponse<T> & Partial<ApiError>
   if (res.code !== 0) {
     throw new ApiClientError({
       code: res.code,
@@ -142,8 +169,12 @@ export const api = {
   },
   knowledge: {
     search: (q: string) => get<KnowledgeHit[]>('/knowledge/search', { q }),
+    list: () => get<KnowledgeHit[]>('/knowledge'),
     get: (id: string) => get<KnowledgeHit>(`/knowledge/${id}`),
     create: (k: Partial<KnowledgeHit>) => post<KnowledgeHit>('/knowledge', k),
+    update: (id: string, k: Partial<KnowledgeHit>) =>
+      put<KnowledgeHit>(`/knowledge/${id}`, k),
+    remove: (id: string) => del<{ ok: true }>(`/knowledge/${id}`),
   },
   relations: {
     of: (asset: string) =>
@@ -167,38 +198,52 @@ export const api = {
       patch<Alert>(`/alerts/${id}`, { state }),
     remove: (id: string) => del<{ ok: true }>(`/alerts/${id}`),
   },
-  reports: {
-    export: (req: ReportRequest) => post<ReportResult>('/reports/export', req),
-  },
   automation: {
     incidents: () => get<Incident[]>('/automation/incidents'),
     createIncident: (i: Partial<Incident>) =>
       post<Incident>('/automation/incidents', i),
     patchIncident: (id: string, state: IncidentState) =>
       patch<Incident>(`/automation/incidents/${id}`, { state }),
+    removeIncident: (id: string) =>
+      del<{ ok: true }>(`/automation/incidents/${id}`),
     cicd: () => get<CicdPipeline[]>('/automation/cicd'),
+    createPipeline: (p: Partial<CicdPipeline>) =>
+      post<CicdPipeline>('/automation/cicd', p),
+    patchPipeline: (id: string, p: Partial<CicdPipeline>) =>
+      patch<CicdPipeline>(`/automation/cicd/${id}`, p),
+    removePipeline: (id: string) =>
+      del<{ ok: true }>(`/automation/cicd/${id}`),
   },
   clusters: {
     list: () => get<ClusterInfo[]>('/clusters'),
     get: (id: string) => get<ClusterDetail>(`/clusters/${id}`),
     scan: (id: string) => post<ClusterDetail>(`/clusters/${id}/scan`),
     create: (c: Partial<ClusterInfo>) => post<ClusterInfo>('/clusters', c),
+    update: (id: string, c: Partial<ClusterInfo>) => put<ClusterInfo>(`/clusters/${id}`, c),
+    remove: (id: string) => del<{ ok: true }>(`/clusters/${id}`),
   },
   guardrails: {
-    check: (scope: string, target?: string) =>
-      post<GuardrailResult>('/guardrails/check', { scope, target }),
+    check: (scope: string, target?: string, content?: string) =>
+      post<GuardrailResult>('/guardrails/check', { scope, target, content }),
+    history: () => get<GuardrailRun[]>('/guardrails/history'),
   },
   dolores: {
     run: (tool: DoloresTool) => post<DoloresResult>('/dolores/run', { tool }),
+    history: () => get<DoloresRun[]>('/dolores/history'),
   },
   credentials: {
     list: () => get<Credential[]>('/credentials'),
     create: (c: CreateCredentialInput) => post<Credential>('/credentials', c),
+    update: (id: string, c: CreateCredentialInput) => put<Credential>(`/credentials/${id}`, c),
     remove: (id: string) => del<{ ok: true }>(`/credentials/${id}`),
   },
   ssh: {
-    collect: (body: { host: string; port?: number; credentialId?: string }) =>
+    collect: (body: { host: string; port?: number; credentialId?: string; assetId?: string }) =>
       post<HostMetricSample>('/ssh/collect', body),
+  },
+  metrics: {
+    history: (assetId: string, from?: string, to?: string) =>
+      get<HostMetricSample[]>('/metrics/history', { assetId, from, to }),
   },
   db: {
     list: () => get<DbConnection[]>('/db'),
@@ -219,15 +264,77 @@ export const api = {
     remove: (id: string) => del<{ ok: true }>(`/alert-rules/${id}`),
     evaluate: () => post<{ created: number }>('/alert-rules/evaluate'),
   },
+  notificationChannels: {
+    list: () => get<NotificationChannel[]>('/notification-channels'),
+    create: (c: Partial<NotificationChannel>) => post<NotificationChannel>('/notification-channels', c),
+    update: (id: string, c: Partial<NotificationChannel>) => put<NotificationChannel>(`/notification-channels/${id}`, c),
+    remove: (id: string) => del<{ ok: true }>(`/notification-channels/${id}`),
+    test: (id: string) => post<{ ok: boolean; message: string }>(`/notification-channels/${id}/test`),
+  },
+  auth: {
+    login: (username: string, password: string) =>
+      post<{ token: string; user: SafeUser }>('/auth/login', { username, password }),
+    logout: () => post<{ ok: true }>('/auth/logout'),
+    me: () => get<SafeUser>('/auth/me'),
+    changePassword: (oldPassword: string, newPassword: string) =>
+      post<{ ok: true }>('/auth/change-password', { oldPassword, newPassword }),
+  },
+  users: {
+    list: () => get<SafeUser[]>('/users'),
+    create: (u: { username: string; password: string; displayName?: string; role?: UserRole }) =>
+      post<SafeUser>('/users', u),
+    update: (id: string, u: { displayName?: string; role?: UserRole; password?: string }) =>
+      put<SafeUser>(`/users/${id}`, u),
+    remove: (id: string) => del<{ ok: true }>(`/users/${id}`),
+  },
+  monitor: {
+    summary: () => get<MonitorSummary>('/monitor/summary'),
+    healthHistory: (kind: 'db' | 'cluster', assetId: string, from?: string, to?: string) =>
+      get<HealthPoint[]>('/monitor/health-history', { kind, assetId, from, to }),
+  },
 }
 
-/** 构造终端 WebSocket 地址（与 REST 同端口，路径 /api/terminal）。 */
-export function terminalWsUrl(params: Record<string, string | number | undefined>): string {
+/** 监控大盘汇总结构（与 /api/monitor/summary 对应） */
+export interface MonitorSummary {
+  totalAssets: number
+  activeAlerts: number
+  hosts: {
+    id: string
+    name: string
+    host?: string
+    port?: number
+    credentialId?: string
+    status: Status
+    reachable?: boolean
+    healthScore?: number
+    latencyMs?: number
+    lastCheckAt?: string
+    cpuPct?: number
+    memPct?: number
+    diskPct?: number
+    netRx?: number
+    netTx?: number
+    collectedAt?: string
+  }[]
+  dbCount: number
+  clusterCount: number
+  checkedAt: string
+}
+
+/** 构造终端 WebSocket 地址（与 REST 同端口，路径 /api/terminal）。
+ *  需携带应用令牌（token）+ 用户会话令牌（userToken）以通过服务端 verifyClient 双层鉴权。 */
+export function terminalWsUrl(
+  params: Record<string, string | number | undefined>,
+  token?: string,
+  userToken?: string
+): string {
   let base = 'ws://127.0.0.1:8787/api'
   const m = API_BASE.match(/https?:\/\/([^/]+)/)
   if (m) base = `ws://${m[1]}/api`
   const qs = new URLSearchParams()
   for (const [k, v] of Object.entries(params)) if (v != null) qs.set(k, String(v))
+  if (token) qs.set('token', token)
+  if (userToken) qs.set('ut', userToken)
   return `${base}/terminal?${qs.toString()}`
 }
 

@@ -1,68 +1,69 @@
-%% ============ 图1：系统体检主线（点击开始体检 → 后端执行命令 → 前端渲染状态） ============
+%% 4.1 后台周期采集 → setLatest → push → 持久化
 sequenceDiagram
-    actor User
-    participant FE as DiagnosticsPage (React)
-    participant Bus as ApiBus (bus.ts)
-    participant API as Express DiagnosticRouter
-    participant Svc as DiagnosticService
-    participant Eng as DiagnosticsEngine (engine.ts)
+  participant BJ as startBackgroundJobs
+  participant MC as metricCollector
+  participant CS as credentialService
+  participant SS as sshService.collectMetrics
+  participant HM as hostMetricsCache
+  participant MS as metricSeriesStore
+  participant PS as persist.ts
 
-    User->>FE: 选择资产，点击「开始体检」
-    FE->>Bus: diagnostics.run(assetId)
-    Bus->>API: POST /api/diagnostics/run {assetId}
-    API->>Svc: run(assetId?)
-    Svc->>Eng: diagnose()
-    Eng-->>Svc: DiagnoseResult（只读 exec 标准命令）
-    Svc-->>API: DiagnoseResult
-    API-->>Bus: 200 {code:0, data, message}
-    Bus-->>FE: DiagnoseResult
-    FE->>FE: 渲染 MetricCard（✅⚠️❌ 状态映射）
-    FE-->>User: 结构化诊断报告 + 建议 + 导出按钮
+  BJ->>MC: start() (60s interval)
+  loop 每 60s（并发≤5）
+    MC->>MC: collectAsset(assetId)
+    MC->>CS: decrypt(credentialId)
+    CS-->>MC: {username,password,privateKey}
+    MC->>SS: collectMetrics({host,port,...})
+    SS->>HM: setLatest(sample)
+    SS->>MS: push(sample)
+    MS->>MS: 追加 + 裁剪至 MAX_POINTS(1440)
+    MS->>PS: scheduleFileWrite('metrics.json', snapshot)
+    PS-->>PS: 400ms 防抖原子写
+  end
 
-%% ============ 图2：态势巡检仪表盘聚合 ============
+%% 4.2 Hosts Drawer → GET history → recharts 渲染
 sequenceDiagram
-    actor User
-    participant FE as DashboardPage
-    participant Bus as ApiBus
-    participant API as Express DashboardRouter
-    participant DSvc as DashboardService
-    participant Store as MemoryStore
+  participant U as 用户
+  participant H as Hosts.tsx
+  participant D as HostTrendDrawer
+  participant B as bus.ts(api.metrics.history)
+  participant R as GET /api/metrics/history
+  participant MS as metricSeriesStore
+  participant C as MetricLineChart(recharts)
 
-    User->>FE: 打开仪表盘
-    FE->>Bus: dashboard.summary()
-    Bus->>API: GET /api/dashboard
-    API->>DSvc: summarize()
-    DSvc->>Store: getAssets() / getAlerts() / getPatrols()
-    Store-->>DSvc: 数据集合
-    DSvc-->>API: DashboardSummary（健康分布/告警/巡检）
-    API-->>Bus: 200 {code:0, data}
-    Bus-->>FE: DashboardSummary
-    FE->>FE: KPI卡 + 健康分布环 + 最近告警流 + 资产榜
+  U->>H: 点击行「详情」
+  H->>D: open(assetId)
+  D->>B: history({assetId, from, to})  // 默认 24h
+  B->>R: GET /api/metrics/history?assetId&from&to
+  R->>MS: query(assetId, from, to, 200)
+  MS-->>R: HostMetricSample[] (降采样后)
+  R-->>B: {code:0, data:[...]}
+  B-->>D: samples
+  D->>C: 每指标一组 series (CPU/内存/磁盘/负载/网络P1)
+  C-->>D: 折线 + 十字光标 + tooltip + 阈值描点
+  U->>D: 切换 1h/6h/24h
+  D->>B: history({assetId, from, to})  // 重算 from/to
 
-%% ============ 图3：知识检索 + 关联视图 ============
+%% 4.3 告警生成 → notify → email(SMTP)
 sequenceDiagram
-    actor User
-    participant FE as KnowledgePage / RelationPage
-    participant Bus as ApiBus
-    participant API as Express Knowledge/Relation Router
-    participant KSvc as KnowledgeService
-    participant KB as KnowledgeBase (knowledge.mjs)
+  participant AR as alertRuleService.evaluateAll
+  participant NS as notificationService.notify
+  participant M as memoryStore(启用渠道)
+  participant CR as crypto.decrypt
+  participant NM as nodemailer
+  participant LOG as 日志
 
-    User->>FE: 输入现象「磁盘满」
-    FE->>Bus: knowledge.search("磁盘满")
-    Bus->>API: GET /api/knowledge/search?q=磁盘满
-    API->>KSvc: search(q)
-    KSvc->>KB: searchKnowledge(q)
-    KB-->>KSvc: FAQ 命中
-    KSvc-->>API: KnowledgeHit[]
-    API-->>Bus: 200 {code:0, data}
-    Bus-->>FE: KnowledgeHit[]（标题/正文/来源）
-    User->>FE: 点击某资产查看「相关资料和相关项目」
-    FE->>Bus: relations.of(asset)
-    Bus->>API: GET /api/relations/:asset
-    API->>KSvc: related(asset)
-    KSvc->>KB: relatedProjects(asset)
-    KB-->>KSvc: RelatedProject[]
-    KSvc-->>API: RelatedProject[]
-    API-->>Bus: 200 {code:0, data}
-    Bus-->>FE: 关联三栏（项目/工单/知识）渲染
+  AR->>NS: notify(alert)
+  NS->>M: getNotificationChannels().filter(enabled && type!='inapp')
+  loop 每个启用渠道
+    alt type === 'email'
+      NS->>CR: decrypt(smtpPasswordEnc)
+      CR-->>NS: password(明文, 仅内存)
+      NS->>NM: sendMail({host,port,secure,user,pass,from,to,text:buildText(alert)})
+      NM-->>NS: ok/fail
+    else webhook/feishu/dingtalk
+      NS->>CR: decrypt(secretEnc)
+      NS->>NS: sendWebhook(...)
+    end
+  end
+  NS-->>AR: sent 计数（失败仅记 LOG，不阻断告警落库）

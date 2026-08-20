@@ -29,6 +29,9 @@ export interface DiagnoseResult {
   suggestions: string[]
 }
 
+// 重要边界：体检对象恒为「运行本 App 的这台本机」（execSync 跑本机只读命令）。
+// 远程主机指标请走 sshService.collectMetrics（主机页 SSH 采集），二者目标与管线彼此独立。
+
 function sh(cmd: string, timeout = 20000): string {
   try {
     return execSync(cmd, { encoding: 'utf-8', timeout }).trim()

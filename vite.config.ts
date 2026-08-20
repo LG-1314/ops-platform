@@ -79,5 +79,15 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
+    rollupOptions: {
+      output: {
+        // 拆 vendor 独立 chunk，降低单 chunk 体积（消除 >500KB 告警 + 改善首屏缓存）
+        manualChunks: {
+          react: ['react', 'react-dom', 'react-router-dom'],
+          mui: ['@mui/material', '@mui/icons-material', '@emotion/react', '@emotion/styled'],
+          xterm: ['@xterm/xterm', '@xterm/addon-fit'],
+        },
+      },
+    },
   },
 })

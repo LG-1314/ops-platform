@@ -12,8 +12,15 @@ import {
   Chip,
   Alert as MuiAlert,
   useTheme,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  TextField,
+  IconButton,
+  Tooltip,
 } from '@mui/material'
-import { Dns, PlayArrow, Groups, SmartToy } from '@mui/icons-material'
+import { Dns, PlayArrow, Groups, SmartToy, Delete, Edit } from '@mui/icons-material'
 import { api } from '../../capabilities/bus'
 import type {
   ClusterInfo,
@@ -44,7 +51,22 @@ export default function Clusters() {
   const [scanning, setScanning] = useState(false)
   const [error, setError] = useState('')
 
+  // 编辑对话框状态
+  const [editOpen, setEditOpen] = useState(false)
+  const [editTarget, setEditTarget] = useState<ClusterInfo | null>(null)
+  const [editName, setEditName] = useState('')
+  const [editEndpoint, setEditEndpoint] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const loadList = () => {
+    api.clusters
+      .list()
+      .then((c) => setClusters(c))
+      .catch((e) => setError((e as Error).message || '加载集群失败'))
+  }
+
   useEffect(() => {
+    loadList()
     api.clusters
       .list()
       .then((c) => {
@@ -76,6 +98,41 @@ export default function Clusters() {
       setError((e as Error).message || '协同巡检失败')
     } finally {
       setScanning(false)
+    }
+  }
+
+  const openEdit = (c: ClusterInfo) => {
+    setEditTarget(c)
+    setEditName(c.name)
+    setEditEndpoint(c.endpoint)
+    setEditOpen(true)
+  }
+
+  const onSaveEdit = async () => {
+    if (!editTarget) return
+    setSaving(true)
+    setError('')
+    try {
+      await api.clusters.update(editTarget.id, { name: editName, endpoint: editEndpoint })
+      setEditOpen(false)
+      loadList()
+      if (selected) select(selected.cluster.id)
+    } catch (e) {
+      setError((e as Error).message || '保存失败')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const onDelete = async (c: ClusterInfo) => {
+    if (!window.confirm(`确认删除集群「${c.name}」？此操作不可恢复。`)) return
+    setError('')
+    try {
+      await api.clusters.remove(c.id)
+      loadList()
+      if (selected?.cluster.id === c.id) setSelected(null)
+    } catch (e) {
+      setError((e as Error).message || '删除失败')
     }
   }
 
@@ -136,16 +193,24 @@ export default function Clusters() {
         </MuiAlert>
       )}
 
-      <Stack direction="row" spacing={1} mb={2} flexWrap="wrap" useFlexGap>
+      <Stack direction="row" spacing={1} mb={2} flexWrap="wrap" useFlexGap alignItems="center">
         {clusters.map((c) => (
-          <Chip
-            key={c.id}
-            label={`${c.name}（${c.nodeCount} 节点）`}
-            color={selected?.cluster.id === c.id ? 'primary' : 'default'}
-            variant={selected?.cluster.id === c.id ? 'filled' : 'outlined'}
-            onClick={() => select(c.id)}
-            sx={{ cursor: 'pointer' }}
-          />
+          <Box key={c.id} sx={{ display: 'inline-flex', alignItems: 'center' }}>
+            <Chip
+              label={`${c.name}（${c.nodeCount} 节点）`}
+              color={selected?.cluster.id === c.id ? 'primary' : 'default'}
+              variant={selected?.cluster.id === c.id ? 'filled' : 'outlined'}
+              onClick={() => select(c.id)}
+              onDelete={() => onDelete(c)}
+              deleteIcon={<Delete />}
+              sx={{ cursor: 'pointer' }}
+            />
+            <Tooltip title="编辑集群">
+              <IconButton size="small" onClick={() => openEdit(c)}>
+                <Edit fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          </Box>
         ))}
       </Stack>
 
@@ -218,6 +283,34 @@ export default function Clusters() {
           </Grid>
         </Grid>
       )}
+
+      {/* 编辑集群 */}
+      <Dialog open={editOpen} onClose={() => setEditOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>编辑集群</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <TextField
+              label="名称"
+              fullWidth
+              value={editName}
+              onChange={(e) => setEditName(e.target.value)}
+            />
+            <TextField
+              label="API Endpoint"
+              fullWidth
+              value={editEndpoint}
+              onChange={(e) => setEditEndpoint(e.target.value)}
+              placeholder="https://k8s-apiserver:6443"
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setEditOpen(false)}>取消</Button>
+          <Button variant="contained" disabled={saving || !editName || !editEndpoint} onClick={onSaveEdit}>
+            {saving ? '保存中…' : '保存'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   )
 }

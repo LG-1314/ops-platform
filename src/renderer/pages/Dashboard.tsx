@@ -7,7 +7,6 @@ import {
   Typography,
   Stack,
   Divider,
-  CircularProgress,
   Alert as MuiAlert,
   useTheme,
   Skeleton,
@@ -43,14 +42,6 @@ function levelStatus(level: string): Status {
   if (level === 'P0' || level === 'P1') return 'error'
   if (level === 'P2') return 'warn'
   return 'unknown'
-}
-
-// 演示趋势数据：后端暂无时间序列接口，趋势图使用静态演示数据（已标注）。
-// 接入真实告警时序接口后，替换 TREND_DEMO 即可。
-const TREND_DEMO = {
-  days: ['周一', '周二', '周三', '周四', '周五', '周六', '周日'],
-  created: [12, 18, 9, 22, 15, 7, 11],
-  resolved: [9, 14, 11, 18, 13, 6, 10],
 }
 
 const LEVEL_ORDER: Alert['level'][] = ['P0', 'P1', 'P2', 'P3']
@@ -155,7 +146,7 @@ export default function Dashboard() {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    ;(window as any).__opsDash = { phase: 'loading' }
+    (window as unknown as { __opsDash?: unknown }).__opsDash = { phase: 'loading' }
     Promise.all([
       withTimeout(api.dashboard.summary(), 10000, '仪表盘摘要'),
       withTimeout(api.alerts.list(), 10000, '告警列表'),
@@ -165,12 +156,12 @@ export default function Dashboard() {
         setSummary(s)
         setAlerts(a)
         setAssets(ast)
-        ;(window as any).__opsDash = { phase: 'ok', assets: ast.length, alerts: a.length }
+        ;(window as unknown as { __opsDash?: unknown }).__opsDash = { phase: 'ok', assets: ast.length, alerts: a.length }
       })
       .catch((e) => {
         const msg = (e as Error)?.message || '加载仪表盘失败'
         setError(msg)
-        ;(window as any).__opsDash = { phase: 'error', error: msg }
+        ;(window as unknown as { __opsDash?: unknown }).__opsDash = { phase: 'error', error: msg }
       })
       .finally(() => setLoading(false))
   }, [])
@@ -213,6 +204,27 @@ export default function Dashboard() {
     () => [...assets].sort((a, b) => b.healthScore - a.healthScore).slice(0, 6),
     [assets]
   )
+
+  // 告警趋势（近 7 天，真实数据）：按 createdAt 聚合每日新增 / 已恢复
+  const trend = useMemo(() => {
+    const days: string[] = []
+    const created: number[] = []
+    const resolved: number[] = []
+    const now = new Date()
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i)
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+      const label = i === 0 ? '今天' : i === 1 ? '昨天' : `${d.getMonth() + 1}/${d.getDate()}`
+      days.push(label)
+      created.push(alerts.filter((a) => a.createdAt.slice(0, 10) === key).length)
+      resolved.push(
+        alerts.filter(
+          (a) => a.state === 'resolved' && (a.resolvedAt || a.createdAt).slice(0, 10) === key
+        ).length
+      )
+    }
+    return { days, created, resolved }
+  }, [alerts])
 
   // 告警级别分布：过滤 0 值，避免环图出现空白扇区，图例更简洁
   const visibleLevelData = useMemo(
@@ -339,7 +351,6 @@ export default function Dashboard() {
               <CardTitle
                 icon={<ShowChart fontSize="small" />}
                 title="告警趋势（近 7 天）"
-                hint="演示数据"
                 legend={trendLegend}
               />
               <Divider sx={{ mb: 1.5 }} />
@@ -349,7 +360,7 @@ export default function Dashboard() {
                 xAxis={[
                   {
                     scaleType: 'point',
-                    data: TREND_DEMO.days,
+                    data: trend.days,
                     tickLabelStyle: { fill: theme.palette.text.secondary, fontSize: 11 },
                   },
                 ]}
@@ -360,7 +371,7 @@ export default function Dashboard() {
                 ]}
                 series={[
                   {
-                    data: TREND_DEMO.created,
+                    data: trend.created,
                     label: '新增告警',
                     color: chartColors[0],
                     area: true,
@@ -368,7 +379,7 @@ export default function Dashboard() {
                     valueFormatter: (v) => (v == null ? '' : `${v} 条`),
                   },
                   {
-                    data: TREND_DEMO.resolved,
+                    data: trend.resolved,
                     label: '已恢复',
                     color: chartColors[2],
                     showMark: true,

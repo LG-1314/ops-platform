@@ -9,15 +9,22 @@
     "dev": "vite",
     "build": "cross-env BUILD_ELECTRON=true vite build",
     "build:win": "npm run build",
-    "pack:win": "npm run build && electron-builder --win --x64"
+    "pack:win": "npm run build && electron-builder --win --x64",
+    "test": "tsx --test src/server/__tests__/unit.test.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint src --ext .ts,.tsx",
+    "format": "prettier --write \"src/**/*.{ts,tsx,css}\""
   },
   "dependencies": {
     "@kubernetes/client-node": "^1.1.2",
     "@mui/x-charts": "^7.29.1",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "cors": "^2.8.5",
     "express": "^4.21.0",
     "ioredis": "^5.4.1",
     "mysql2": "^3.11.3",
+    "nodemailer": "^9.0.5",
     "pg": "^8.13.1",
     "ssh2": "^1.17.0",
     "ws": "^8.18.0"
@@ -30,29 +37,31 @@
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/node": "^20.14.0",
+    "@types/nodemailer": "^8.0.1",
     "@types/pg": "^8.11.10",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@types/ssh2": "^1.15.0",
     "@types/ws": "^8.5.12",
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
     "@vitejs/plugin-react": "^4.3.4",
-    "autoprefixer": "^10.4.20",
     "concurrently": "^9.0.1",
     "cross-env": "^7.0.3",
     "electron": "^28.3.3",
     "electron-builder": "^24.13.3",
-    "postcss": "^8.4.47",
+    "eslint": "^8.57.0",
+    "eslint-plugin-react-hooks": "^4.6.2",
+    "prettier": "^3.3.3",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-router-dom": "^6.26.2",
-    "tailwindcss": "^3.4.13",
+    "react-router-dom": "^7.18.2",
     "tsx": "^4.19.1",
     "typescript": "^5.6.3",
     "vite": "^5.4.11",
     "vite-plugin-electron": "^0.29.0",
     "vite-plugin-electron-renderer": "^0.14.6",
-    "wait-on": "^8.0.1",
-    "zustand": "^4.5.5"
+    "wait-on": "^8.0.1"
   },
   "build": {
     "appId": "com.opsplatform.desktop",
@@ -80,14 +89,17 @@
     },
     "win": {
       "target": "nsis",
-      "artifactName": "${productName}-${version}-setup.${ext}"
+      "artifactName": "${productName}-${version}-setup.${ext}",
+      "icon": "build/icon.ico"
     },
     "nsis": {
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "include": "build/installer.nsh",
-      "deleteAppDataOnUninstall": false
+      "deleteAppDataOnUninstall": false,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico"
     }
   }
 }

@@ -50,8 +50,10 @@ const api = {
   version: (): string => process.versions.electron ?? '0.0.0',
   ping: (): Promise<string> => ipcRenderer.invoke('ping').catch(() => 'no-handler'),
   apiBase: `http://127.0.0.1:${process.env.OPS_API_PORT || '8787'}/api`,
-  request: (method: string, path: string, body?: unknown): Promise<unknown> =>
-    ipcRenderer.invoke('ops-api', { method, path, body }),
+  // 取回能力总线令牌（终端 WebSocket 鉴权用），返回 Promise<string>
+  token: (): Promise<string> => ipcRenderer.invoke('ops-auth-token').catch(() => ''),
+  request: (method: string, path: string, body?: unknown, userToken?: string): Promise<unknown> =>
+    ipcRenderer.invoke('ops-api', { method, path, body, userToken }),
 }
 
 contextBridge.exposeInMainWorld('opsApi', api)

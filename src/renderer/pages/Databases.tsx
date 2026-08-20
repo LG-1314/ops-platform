@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   Box,
   Paper,
@@ -30,7 +30,7 @@ import {
   Refresh as IconRefresh,
 } from '@mui/icons-material'
 import { api } from '../../capabilities/bus'
-import type { DbConnection, DbHealth, DbType, Credential, Status } from '@shared/types'
+import type { DbConnection, DbHealth, DbType, Status } from '@shared/types'
 
 function statusColor(theme: Theme, s: Status): string {
   if (s === 'ok') return theme.palette.success.main
@@ -54,7 +54,6 @@ function MetricChip({ name, value, status }: { name: string; value: string; stat
 export default function Databases() {
   const theme = useTheme()
   const [conns, setConns] = useState<DbConnection[]>([])
-  const [creds, setCreds] = useState<Credential[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
@@ -72,15 +71,12 @@ export default function Databases() {
     password: string
   }>({ name: '', dbType: 'mysql', host: '', port: 3306, database: '', username: '', password: '' })
 
-  const dbCreds = useMemo(() => creds.filter((c) => c.kind === 'db'), [creds])
-
   async function load() {
     setLoading(true)
     setError(null)
     try {
-      const [c, cr] = await Promise.all([api.db.list(), api.credentials.list()])
+      const c = await api.db.list()
       setConns(c)
-      setCreds(cr)
     } catch (e) {
       setError((e as Error).message)
     } finally {
