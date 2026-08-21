@@ -24,8 +24,11 @@ export function attachTerminal(wss: WebSocketServer): void {
 
     let client: Client | null = null
     let shell: { end: () => void; write: (d: string) => void; setWindow?: (r: number, c: number, w: number, h: number) => void; on: (e: string, cb: (d: Buffer) => void) => void; stderr: { on: (e: string, cb: (d: Buffer) => void) => void } } | null = null
-
+    // 防重复清理（两端任意一方 close 都可能触发）
+    let cleaned = false
     const cleanup = (): void => {
+      if (cleaned) return
+      cleaned = true
       try {
         shell?.end()
       } catch {
@@ -33,6 +36,11 @@ export function attachTerminal(wss: WebSocketServer): void {
       }
       try {
         client?.end()
+      } catch {
+        /* ignore */
+      }
+      try {
+        if (ws.readyState === ws.OPEN) ws.close()
       } catch {
         /* ignore */
       }
@@ -71,17 +79,14 @@ export function attachTerminal(wss: WebSocketServer): void {
             }
             shell = stream
             stream.on('data', (d: Buffer) => {
-              if (ws.readyState === ws.OPEN) ws.send(d.toString('utf8'))
+              // 二进制帧透传：避免 d.toString('utf8') 在多字节字符被分块时产生截断乱码
+              if (ws.readyState === ws.OPEN) ws.send(d)
             })
             stream.stderr.on('data', (d: Buffer) => {
-              if (ws.readyState === ws.OPEN) ws.send(d.toString('utf8'))
+              if (ws.readyState === ws.OPEN) ws.send(d)
             })
             stream.on('close', () => {
-              try {
-                ws.close()
-              } catch {
-                /* ignore */
-              }
+              cleanup()
             })
             ws.on('message', (msg: Buffer) => {
               const text = msg.toString()
@@ -101,6 +106,7 @@ export function attachTerminal(wss: WebSocketServer): void {
               stream.write(text)
             })
             ws.on('close', () => cleanup())
+            ws.on('error', () => cleanup())
           }
         )
       } catch (e) {

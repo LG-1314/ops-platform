@@ -12,7 +12,7 @@ import {
   Chip,
 } from '@mui/material'
 import { useTheme } from '@mui/material/styles'
-import { Terminal as IconTerminal, LinkOff as IconDisconnect, PlayArrow as IconConnect } from '@mui/icons-material'
+import { Terminal as IconTerminal, LinkOff as IconDisconnect, PlayArrow as IconConnect, Logout as IconExit } from '@mui/icons-material'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
@@ -113,6 +113,14 @@ export default function Terminal() {
     ro.observe(containerRef.current)
     return () => {
       ro.disconnect()
+      // 关键：卸载时必须关闭 WS，否则服务端 shell 进程残留，
+      // 重新进入会叠加第二个连接 → 输出写入已销毁的 xterm → 界面异常
+      try {
+        if (wsRef.current && wsRef.current.readyState < WebSocket.CLOSING) wsRef.current.close()
+      } catch {
+        /* ignore */
+      }
+      wsRef.current = null
       term.dispose()
       termRef.current = null
       fitRef.current = null
@@ -144,6 +152,14 @@ export default function Terminal() {
     term?.reset()
     term?.writeln(`\x1b[90m正在连接 ${n || h}:${p || 22} …\x1b[0m`)
 
+    // 关键：连接前关闭旧连接，避免残留 shell 叠加导致输出混乱
+    try {
+      if (wsRef.current && wsRef.current.readyState < WebSocket.CLOSING) wsRef.current.close()
+    } catch {
+      /* ignore */
+    }
+    wsRef.current = null
+
     const token = await getToken()
     let userToken = ''
     try {
@@ -164,6 +180,8 @@ export default function Terminal() {
       return
     }
     wsRef.current = ws
+    // 服务端按二进制帧透传（避免 UTF-8 分块截断），前端必须按二进制接收
+    ws.binaryType = 'arraybuffer'
 
     ws.onopen = () => {
       setConnState('open')
@@ -171,17 +189,31 @@ export default function Terminal() {
       ws.send(JSON.stringify({ type: 'resize', cols, rows }))
     }
     ws.onmessage = (ev) => {
-      term?.write(ev.data as string)
+      if (typeof ev.data === 'string') {
+        term?.write(ev.data)
+      } else {
+        // ArrayBuffer → Uint8Array 写入 xterm（支持全量 UTF-8 字符）
+        try {
+          term?.write(new Uint8Array(ev.data as ArrayBuffer))
+        } catch {
+          /* ignore */
+        }
+      }
     }
     ws.onerror = () => {
       setConnState('error')
       setError('连接出错：目标主机不可达或 SSH 服务拒绝连接，请检查主机/端口/凭据')
       term?.writeln('\x1b[31m[终端] 连接出错\x1b[0m')
+      try {
+        ws.close()
+      } catch {
+        /* ignore */
+      }
     }
     ws.onclose = () => {
       setConnState('closed')
       term?.writeln('\r\n\x1b[90m[连接已关闭]\x1b[0m\r\n')
-      wsRef.current = null
+      if (wsRef.current === ws) wsRef.current = null
     }
     setParams(
       (prev) => {
@@ -197,10 +229,16 @@ export default function Terminal() {
     )
   }
 
+  // 记录当前已连接的主机签名，host 参数变化（如从主机页跳转）时自动重连
+  const lastConnRef = useRef('')
   useEffect(() => {
-    if (host) connect(host, port, credentialId, name)
+    const sig = `${host}:${port}:${credentialId}`
+    if (host && lastConnRef.current !== sig) {
+      lastConnRef.current = sig
+      void connect(host, port, credentialId, name)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [host, port, credentialId])
 
   function disconnect() {
     try {
@@ -210,6 +248,22 @@ export default function Terminal() {
     }
     wsRef.current = null
     setConnState('closed')
+  }
+
+  /** 正常退出会话：向远端 shell 发送 exit 命令，由服务端自动关闭连接 */
+  function sendExit() {
+    const ws = wsRef.current
+    const term = termRef.current
+    try {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        term?.writeln('\x1b[90m[退出会话] exit\x1b[0m\r\n')
+        ws.send('exit\r')
+      } else {
+        disconnect()
+      }
+    } catch {
+      disconnect()
+    }
   }
 
   function onManualConnect() {
@@ -317,9 +371,14 @@ export default function Terminal() {
             {connState === 'open' ? '已连接，直接键入命令执行（支持全屏终端程序如 vim/top）' : '未连接'}
           </Typography>
           {connState === 'open' ? (
-            <Button size="small" color="error" startIcon={<IconDisconnect />} onClick={disconnect}>
-              断开
-            </Button>
+            <Stack direction="row" spacing={1}>
+              <Button size="small" variant="outlined" startIcon={<IconExit />} onClick={sendExit}>
+                退出会话
+              </Button>
+              <Button size="small" color="error" startIcon={<IconDisconnect />} onClick={disconnect}>
+                断开
+              </Button>
+            </Stack>
           ) : (
             host && (
               <Button size="small" variant="contained" startIcon={<IconConnect />} onClick={() => connect(host, port, credentialId, name)}>
