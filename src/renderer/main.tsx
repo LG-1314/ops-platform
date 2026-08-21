@@ -18,9 +18,9 @@ const muiCache = createCache({ key: 'mui', speedy: false, prepend: true })
 function RenderProbe() {
   const [diag, setDiag] = useState('')
   const [color, setColor] = useState('#D32F2F')
-  // 生产环境不显示诊断条（黑屏诊断由主进程 dom-probe 写入日志），避免误弹红色条干扰正常使用
-  if (!import.meta.env.DEV) return null
   useEffect(() => {
+    // 生产环境不显示诊断条（黑屏诊断由主进程 dom-probe 写入日志），避免误弹红色条干扰正常使用
+    if (!import.meta.env.DEV) return
     const collect = () => {
       const dash = (window as any).__opsDash
       const root = document.getElementById('root')

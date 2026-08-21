@@ -36,8 +36,6 @@ import {
   PlayArrow as IconPlay,
   Dns as IconPort,
   Lan as IconConn,
-  CheckCircle,
-  Error as IconError,
   Warning,
 } from '@mui/icons-material'
 import { api } from '../../capabilities/bus'

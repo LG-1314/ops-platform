@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, protocol, session, net, ipcMain, Menu, shell } from 'electron'
+import { app, BrowserWindow, dialog, protocol, session, net, ipcMain, Menu } from 'electron'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import fs from 'node:fs'

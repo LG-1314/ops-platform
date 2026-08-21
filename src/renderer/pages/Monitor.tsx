@@ -52,6 +52,9 @@ function Bar({ label, pct, theme }: { label: string; pct?: number; theme: Theme 
   )
 }
 
+// 稳定空数组引用：避免 `summary?.hosts ?? []` 每次渲染生成新数组
+const EMPTY_HOSTS: MonitorSummary['hosts'] = []
+
 function fmtTime(iso: string): string {
   const d = new Date(iso)
   const p = (n: number) => String(n).padStart(2, '0')
@@ -89,8 +92,9 @@ export default function Monitor() {
     [summary]
   )
 
-  // 直接复用 summary.hosts（无需克隆，避免字段增删不同步）
-  const hostSeries = summary?.hosts ?? []
+  // 直接复用 summary.hosts（无需克隆，避免字段增删不同步）；
+  // 用模块级空数组常量，避免 `?? []` 每次渲染生成新引用导致 sortedHosts useMemo 失效
+  const hostSeries = summary?.hosts ?? EMPTY_HOSTS
 
   // 排序：在线+健康分高优先
   const sortedHosts = useMemo(
