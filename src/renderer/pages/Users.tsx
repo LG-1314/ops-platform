@@ -56,6 +56,7 @@ export default function Users() {
   const [editing, setEditing] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [snack, setSnack] = useState('')
+  const [confirmDelete, setConfirmDelete] = useState<SafeUser | null>(null)
 
   const load = () => {
     setLoading(true)
@@ -119,6 +120,7 @@ export default function Users() {
     try {
       await api.users.remove(u.id)
       setSnack('用户已删除')
+      setConfirmDelete(null)
       load()
     } catch (e) {
       setError((e as Error).message || '删除失败')
@@ -206,7 +208,7 @@ export default function Users() {
                     <IconButton
                       size="small"
                       color="error"
-                      onClick={() => void remove(u)}
+                      onClick={() => setConfirmDelete(u)}
                       disabled={me?.id === u.id}
                       title={me?.id === u.id ? '不能删除当前用户' : '删除'}
                     >
@@ -270,6 +272,17 @@ export default function Users() {
       </Dialog>
 
       <Snackbar open={Boolean(snack)} autoHideDuration={2500} onClose={() => setSnack('')} message={snack} />
+
+      <Dialog open={confirmDelete !== null} onClose={() => setConfirmDelete(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>确认删除用户</DialogTitle>
+        <DialogContent>
+          确定要删除用户「{confirmDelete?.username}」吗？此操作不可撤销。
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfirmDelete(null)}>取消</Button>
+          <Button color="error" variant="contained" onClick={() => void remove(confirmDelete!)}>删除</Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   )
 }
