@@ -59,12 +59,10 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
 function CardTitle({
   icon,
   title,
-  hint,
   legend,
 }: {
   icon: ReactNode
   title: string
-  hint?: string
   legend?: ReactNode
 }) {
   return (
@@ -87,14 +85,6 @@ function CardTitle({
       <Box sx={{ flex: 1 }} />
       {legend && (
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>{legend}</Box>
-      )}
-      {hint && (
-        <Chip
-          size="small"
-          label={hint}
-          sx={{ height: 20, fontSize: 11, color: 'text.secondary' }}
-          variant="outlined"
-        />
       )}
     </Stack>
   )
