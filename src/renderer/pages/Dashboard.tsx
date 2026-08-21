@@ -147,23 +147,23 @@ export default function Dashboard() {
 
   useEffect(() => {
     (window as unknown as { __opsDash?: unknown }).__opsDash = { phase: 'loading' }
-    Promise.all([
-      withTimeout(api.dashboard.summary(), 10000, '仪表盘摘要'),
-      withTimeout(api.alerts.list(), 10000, '告警列表'),
-      withTimeout(api.assets.list(), 10000, '资产列表'),
-    ])
-      .then(([s, a, ast]) => {
+    // 三路 API 独立加载：单路失败不吞掉其余数据，仅提示该路错误
+    withTimeout(api.dashboard.summary(), 10000, '仪表盘摘要')
+      .then((s) => {
         setSummary(s)
-        setAlerts(a)
-        setAssets(ast)
-        ;(window as unknown as { __opsDash?: unknown }).__opsDash = { phase: 'ok', assets: ast.length, alerts: a.length }
+        ;(window as unknown as { __opsDash?: unknown }).__opsDash = { phase: 'ok' }
       })
       .catch((e) => {
-        const msg = (e as Error)?.message || '加载仪表盘失败'
-        setError(msg)
-        ;(window as unknown as { __opsDash?: unknown }).__opsDash = { phase: 'error', error: msg }
+        setError((e as Error)?.message || '仪表盘摘要加载失败')
+        ;(window as unknown as { __opsDash?: unknown }).__opsDash = { phase: 'error', error: (e as Error)?.message }
       })
       .finally(() => setLoading(false))
+    withTimeout(api.alerts.list(), 10000, '告警列表')
+      .then(setAlerts)
+      .catch(() => {}) // 告警列表失败不影响主体，Dashboard 摘要内已含 recentAlerts
+    withTimeout(api.assets.list(), 10000, '资产列表')
+      .then(setAssets)
+      .catch(() => {})
   }, [])
 
   const avgHealth = useMemo(

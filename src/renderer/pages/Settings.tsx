@@ -173,13 +173,21 @@ export default function Settings() {
   }
 
   const onDelete = async (id: string) => {
-    await api.notificationChannels.remove(id).catch(() => {})
-    setChannels(await api.notificationChannels.list())
+    try {
+      await api.notificationChannels.remove(id)
+      setChannels(await api.notificationChannels.list())
+    } catch (e) {
+      setErr((e as Error).message || '删除通知渠道失败')
+    }
   }
 
   const toggleEnabled = async (c: NotificationChannel, val: boolean) => {
-    await api.notificationChannels.update(c.id, { enabled: val }).catch(() => {})
-    setChannels(await api.notificationChannels.list())
+    try {
+      await api.notificationChannels.update(c.id, { enabled: val })
+      setChannels(await api.notificationChannels.list())
+    } catch (e) {
+      setErr((e as Error).message || '更新通知渠道失败')
+    }
   }
 
   const onTest = async (c: NotificationChannel) => {
@@ -235,7 +243,7 @@ export default function Settings() {
             切换后立即生效并自动保存，重启应用后保持。
           </Typography>
           <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ mt: 1.5 }}>
-            <Chip label="主色 #3D7BFF" variant="outlined" />
+            <Chip label={`主色 ${theme.palette.primary.main.toUpperCase()}`} variant="outlined" />
             <Chip label="卡片圆角 8px" variant="outlined" />
             <Chip size="small" icon={<CheckCircle color="success" />} label="正常" variant="outlined" />
             <Chip size="small" icon={<Warning color="warning" />} label="警告" variant="outlined" />

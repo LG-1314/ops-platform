@@ -99,9 +99,9 @@ export function logout(token: string): void {
 export function requireUser(req: Request, res: Response, next: NextFunction): void {
   const headerVal = req.headers[USER_TOKEN_HEADER]
   const token = Array.isArray(headerVal) ? headerVal[0] : headerVal
-  if (!token) return void res.status(401).json({ code: 401, message: 'unauthorized', data: null })
+  if (!token) return void res.status(401).json({ code: 401, message: '未登录：请先登录后再操作', data: null })
   const user = currentUser(token)
-  if (!user) return void res.status(401).json({ code: 401, message: 'unauthorized', data: null })
+  if (!user) return void res.status(401).json({ code: 401, message: '登录已过期：请重新登录', data: null })
   ;(req as Request & { user?: SafeUser }).user = user
   next()
 }
@@ -110,7 +110,7 @@ export function requireUser(req: Request, res: Response, next: NextFunction): vo
 export function requireAdmin(req: Request, res: Response, next: NextFunction): void {
   const user = (req as Request & { user?: SafeUser }).user
   if (user?.role !== 'admin') {
-    return void res.status(403).json({ code: 403, message: 'forbidden: admin only', data: null })
+    return void res.status(403).json({ code: 403, message: '无权限：此操作需要管理员身份', data: null })
   }
   next()
 }

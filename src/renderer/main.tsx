@@ -18,6 +18,8 @@ const muiCache = createCache({ key: 'mui', speedy: false, prepend: true })
 function RenderProbe() {
   const [diag, setDiag] = useState('')
   const [color, setColor] = useState('#D32F2F')
+  // 生产环境不显示诊断条（黑屏诊断由主进程 dom-probe 写入日志），避免误弹红色条干扰正常使用
+  if (!import.meta.env.DEV) return null
   useEffect(() => {
     const collect = () => {
       const dash = (window as any).__opsDash
@@ -34,7 +36,7 @@ function RenderProbe() {
       // 仅在异常时显示：样式未注入、API 出错、或仍在加载（默认路由尚未就绪时 phase 为 undefined，先不报）
       const abnormal = r.mui < 10 || phase === 'error' || phase === 'loading'
       if (abnormal) {
-        setColor(phase === 'loading' ? '#1565C0' : '#D32F2F')
+        setColor(phase === 'loading' ? '#3D7BFF' : '#D32F2F')
         setDiag(
           `route=${location.hash || '(空)'} phase=${phase || '?'} mui=${r.mui} emotion=${r.emotion} cards=${r.cards} h1=${r.h1}` +
             (r.dash?.error ? ` err=${r.dash.error}` : '')

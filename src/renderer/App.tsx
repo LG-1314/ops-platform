@@ -1,4 +1,4 @@
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, useEffect } from 'react'
 import type { ReactNode } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { Box, CircularProgress, Typography } from '@mui/material'
@@ -6,7 +6,8 @@ import Layout from './components/Layout'
 // 默认路由（仪表盘）同步导入：避免从 file:// 加载时 lazy chunk 失败导致首屏黑屏
 import Dashboard from './pages/Dashboard'
 import Login from './pages/Login'
-import { useUserRole, useIsLoggedIn } from './state/userRole'
+import { useUserRole, useIsLoggedIn, clearSession } from './state/userRole'
+import { onUnauthorized } from '../capabilities/bus'
 
 // 管理员专属路由：个人用户访问时重定向回仪表盘
 const ADMIN_ONLY = [
@@ -65,6 +66,11 @@ function RoleGate({ path, node }: { path: string; node: ReactNode }) {
 }
 
 export default function App() {
+  // 全局 401 处理器：后端会话过期时清空本地会话 → AuthGate 自动跳登录页
+  useEffect(() => {
+    onUnauthorized(() => clearSession())
+  }, [])
+
   return (
     <Routes>
       <Route path="/login" element={<Login />} />

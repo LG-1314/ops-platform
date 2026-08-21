@@ -134,7 +134,7 @@ export default function Terminal() {
     api.credentials
       .list()
       .then((c) => setCreds(c.filter((x) => x.kind === 'ssh')))
-      .catch(() => {})
+      .catch((e) => setError((e as Error).message || '加载凭据失败'))
   }, [])
 
   async function connect(h: string, p: string, cid: string, n: string) {
@@ -175,6 +175,8 @@ export default function Terminal() {
     }
     ws.onerror = () => {
       setConnState('error')
+      setError('连接出错：目标主机不可达或 SSH 服务拒绝连接，请检查主机/端口/凭据')
+      term?.writeln('\x1b[31m[终端] 连接出错\x1b[0m')
     }
     ws.onclose = () => {
       setConnState('closed')

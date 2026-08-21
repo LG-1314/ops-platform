@@ -46,7 +46,7 @@ export function requireWriteToken(req: Request, res: Response, next: NextFunctio
   if (req.path === LOGIN_PATH) return next()
   if (process.env.NODE_ENV === 'production') {
     if (checkToken({ headers: req.headers, query: req.query as Record<string, string | undefined> })) return next()
-    res.status(401).json({ code: 401, message: 'unauthorized', data: null })
+    res.status(401).json({ code: 401, message: '未授权：请通过桌面应用访问（缺少应用令牌）', data: null })
     return
   }
   next()

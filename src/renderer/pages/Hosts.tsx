@@ -89,6 +89,8 @@ export default function Hosts() {
   const [submitting, setSubmitting] = useState(false)
   const [collectingId, setCollectingId] = useState('')
   const [collectingAll, setCollectingAll] = useState(false)
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [confirmDeleteName, setConfirmDeleteName] = useState('')
   const [trendAsset, setTrendAsset] = useState<Asset | null>(null)
 
   // 来自监控大盘「趋势」快捷入口：?trendId=xxx 自动打开趋势抽屉
@@ -126,7 +128,7 @@ export default function Hosts() {
       setHosts(h)
       setMetrics(mon.hosts)
     } catch (e) {
-      setError((e as Error).message)
+      setError((e as Error).message || '加载主机列表失败')
     } finally {
       setLoading(false)
     }
@@ -145,7 +147,7 @@ export default function Hosts() {
       setSampleOpen(true)
       await load()
     } catch (e) {
-      setError((e as Error).message)
+      setError((e as Error).message || '采集指标失败')
     } finally {
       setCollectingId('')
     }
@@ -174,12 +176,20 @@ export default function Hosts() {
     }
   }
 
-  async function onDelete(id: string) {
+  function askDelete(id: string, name: string) {
+    setConfirmDeleteId(id)
+    setConfirmDeleteName(name)
+  }
+
+  async function confirmDelete() {
+    if (!confirmDeleteId) return
+    setError(null)
     try {
-      await api.assets.remove(id)
+      await api.assets.remove(confirmDeleteId)
+      setConfirmDeleteId(null)
       await load()
     } catch (e) {
-      setError((e as Error).message)
+      setError((e as Error).message || '删除主机失败')
     }
   }
 
@@ -333,7 +343,7 @@ export default function Hosts() {
                         </IconButton>
                       </Tooltip>
                       <Tooltip title="删除">
-                        <IconButton size="small" onClick={() => void onDelete(h.id)}>
+                        <IconButton size="small" onClick={() => askDelete(h.id, h.name)}>
                           <IconDelete fontSize="small" />
                         </IconButton>
                       </Tooltip>
@@ -472,6 +482,17 @@ export default function Hosts() {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setSampleOpen(false)}>关闭</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={confirmDeleteId !== null} onClose={() => setConfirmDeleteId(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>确认删除</DialogTitle>
+        <DialogContent>
+          确定要删除主机「{confirmDeleteName}」吗？此操作不可撤销。
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfirmDeleteId(null)}>取消</Button>
+          <Button color="error" variant="contained" onClick={() => void confirmDelete()}>删除</Button>
         </DialogActions>
       </Dialog>
     </Box>

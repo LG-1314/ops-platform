@@ -70,6 +70,15 @@ class ApiClientError extends Error {
 
 type Query = Record<string, string | number | undefined>
 
+// —— 全局 401 会话过期处理 ——
+// 后端会话 24h 滑动过期：任一请求收到 401（登录页以外的受保护接口）即触发，
+// 由 App 注册处理器清空本地会话 → AuthGate 自动跳回登录页，避免各页面各自报英文错误。
+type UnauthorizedHandler = () => void
+let unauthorizedHandler: UnauthorizedHandler | null = null
+export function onUnauthorized(handler: UnauthorizedHandler): void {
+  unauthorizedHandler = handler
+}
+
 function buildQuery(query?: Query): string {
   if (!query) return ''
   const params = new URLSearchParams()
@@ -105,12 +114,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       throw new ApiClientError({ code: res.status, message: `HTTP ${res.status}`, detail: '响应非 JSON' })
     }
     if (json.code !== 0) {
+      if (json.code === 401 && path !== '/auth/login') unauthorizedHandler?.()
       throw new ApiClientError({ code: json.code, message: json.message, detail: json.detail })
     }
     return json.data as T
   }
   const res = (await rpc(method, path, body, userToken)) as ApiResponse<T> & Partial<ApiError>
   if (res.code !== 0) {
+    if (res.code === 401 && path !== '/auth/login') unauthorizedHandler?.()
     throw new ApiClientError({
       code: res.code,
       message: res.message,

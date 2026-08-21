@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, protocol, session, net, ipcMain } from 'electron'
+import { app, BrowserWindow, dialog, protocol, session, net, ipcMain, Menu, shell } from 'electron'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import fs from 'node:fs'
@@ -558,6 +558,109 @@ if (!app.requestSingleInstanceLock()) {
     })
   }
 
+  // 替换默认英文菜单为精简中文菜单（工具已内置侧边栏导航，系统菜单只保留实用快捷键）
+  function setupAppMenu(): void {
+    const isMac = process.platform === 'darwin'
+    const template: Electron.MenuItemConstructorOptions[] = [
+      {
+        label: '文件',
+        submenu: [
+          {
+            label: '刷新页面',
+            accelerator: 'CmdOrCtrl+R',
+            click: () => {
+              try {
+                win?.webContents?.reload()
+              } catch {
+                /* ignore */
+              }
+            },
+          },
+          { type: 'separator' },
+          {
+            label: '退出',
+            accelerator: isMac ? 'Cmd+Q' : 'Alt+F4',
+            role: 'quit',
+          },
+        ],
+      },
+      {
+        label: '视图',
+        submenu: [
+          {
+            label: '实际大小',
+            accelerator: 'CmdOrCtrl+0',
+            role: 'resetZoom',
+          },
+          {
+            label: '放大',
+            accelerator: 'CmdOrCtrl+=',
+            role: 'zoomIn',
+          },
+          {
+            label: '缩小',
+            accelerator: 'CmdOrCtrl+-',
+            role: 'zoomOut',
+          },
+          { type: 'separator' },
+          {
+            label: '切换全屏',
+            accelerator: isMac ? 'Cmd+Ctrl+F' : 'F11',
+            role: 'togglefullscreen',
+          },
+          { type: 'separator' },
+          {
+            label: '开发者工具',
+            accelerator: 'CmdOrCtrl+Shift+I',
+            click: () => {
+              try {
+                win?.webContents?.toggleDevTools()
+              } catch {
+                /* ignore */
+              }
+            },
+          },
+        ],
+      },
+      {
+        label: '帮助',
+        submenu: [
+          {
+            label: '关于运维全维度管理平台',
+            click: () => {
+              dialog.showMessageBox({
+                type: 'info',
+                title: '关于',
+                message: '运维全维度管理平台',
+                detail:
+                  `版本 ${app.getVersion()}\n\n` +
+                  '企业级运维能力总线桌面客户端\n' +
+                  'SSH / 数据库 / K8s / 云资源 / 终端 / 告警 / 智能巡检',
+              })
+            },
+          },
+        ],
+      },
+    ]
+    // macOS 首项须为应用名（否则 macOS 自动添加 @"Electron"）
+    if (isMac) {
+      template.unshift({
+        label: app.getName(),
+        submenu: [
+          { role: 'about', label: '关于' },
+          { type: 'separator' },
+          { role: 'hide', label: '隐藏' },
+          { role: 'hideOthers', label: '隐藏其他' },
+          { role: 'unhide', label: '显示全部' },
+          { type: 'separator' },
+          { role: 'quit', label: '退出' },
+        ],
+      })
+    }
+    const menu = Menu.buildFromTemplate(template)
+    Menu.setApplicationMenu(menu)
+  }
+
   async function boot(): Promise<void> {
     // 会话级强制直连，配合 no-proxy-server，避免本机代理劫持本地地址
     try {
@@ -580,6 +683,9 @@ if (!app.requestSingleInstanceLock()) {
 
     // 注册 app:// 协议，必须在创建 BrowserWindow 之前完成
     registerAppProtocol()
+
+    // 替换默认 Electron 英文菜单为中文菜单
+    setupAppMenu()
 
     if (process.env.NO_WINDOW) {
       // 仅用于无界面环境验证服务启动

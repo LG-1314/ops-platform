@@ -62,7 +62,7 @@ export default function Monitor() {
   const theme = useTheme()
   const navigate = useNavigate()
   const [summary, setSummary] = useState<MonitorSummary | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
   const load = () => {
@@ -89,27 +89,8 @@ export default function Monitor() {
     [summary]
   )
 
-  const hostSeries = useMemo(() => {
-    if (!summary) return []
-    return summary.hosts.map((h) => ({
-      id: h.id,
-      name: h.name,
-      host: h.host,
-      port: h.port,
-      credentialId: h.credentialId,
-      status: h.status,
-      reachable: h.reachable,
-      healthScore: h.healthScore,
-      latencyMs: h.latencyMs,
-      lastCheckAt: h.lastCheckAt,
-      cpuPct: h.cpuPct,
-      memPct: h.memPct,
-      diskPct: h.diskPct,
-      netRx: h.netRx,
-      netTx: h.netTx,
-      collectedAt: h.collectedAt,
-    }))
-  }, [summary])
+  // 直接复用 summary.hosts（无需克隆，避免字段增删不同步）
+  const hostSeries = summary?.hosts ?? []
 
   // 排序：在线+健康分高优先
   const sortedHosts = useMemo(
@@ -302,7 +283,9 @@ export default function Monitor() {
                               try {
                                 await api.ssh.collect({ host: h.host ?? '', port: h.port, credentialId: h.credentialId, assetId: h.id })
                                 load()
-                              } catch { /* ignore */ }
+                              } catch (e) {
+                                setError((e as Error).message || '采集失败，请检查主机连通性与 SSH 凭据')
+                              }
                             }}>
                               <IconCollect fontSize="small" />
                             </IconButton>
@@ -351,7 +334,10 @@ function HealthTabs() {
         setItems(mapped)
         if (mapped.length > 0 && !mapped.some((m) => m.id === selected)) setSelected(mapped[0].id)
       }
-    } catch { /* ignore */ }
+      setError('')
+    } catch (e) {
+      setError((e as Error).message || '加载健康列表失败')
+    }
   }
 
   useEffect(() => { void loadList() }, [tab]) // eslint-disable-line react-hooks/exhaustive-deps
