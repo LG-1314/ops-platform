@@ -6,7 +6,6 @@ node_modules/
 # 构建产物
 dist/
 dist-electron/
-release/
 release-v2/
 
 # 系统
