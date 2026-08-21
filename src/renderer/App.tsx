@@ -13,6 +13,7 @@ import { onUnauthorized } from '../capabilities/bus'
 const ADMIN_ONLY = [
   '/diagnostics', '/knowledge', '/relations', '/assets', '/patrols',
   '/automation', '/clusters', '/databases', '/cloud', '/ops-tools', '/users',
+  '/firewall',
 ]
 
 // 其余路由级懒加载：减小非默认页面 JS 体积，按需拉取 chunk。
@@ -32,6 +33,7 @@ const Settings = lazy(() => import('./pages/Settings'))
 const OpsTools = lazy(() => import('./pages/OpsTools'))
 const Monitor = lazy(() => import('./pages/Monitor'))
 const Users = lazy(() => import('./pages/Users'))
+const Firewall = lazy(() => import('./pages/Firewall'))
 
 function PageFallback() {
   return (
@@ -94,6 +96,7 @@ export default function App() {
         <Route path="clusters" element={page(<RoleGate path="/clusters" node={<Clusters />} />)} />
         <Route path="databases" element={page(<RoleGate path="/databases" node={<Databases />} />)} />
         <Route path="cloud" element={page(<RoleGate path="/cloud" node={<Cloud />} />)} />
+        <Route path="firewall" element={page(<RoleGate path="/firewall" node={<Firewall />} />)} />
         <Route path="hosts" element={page(<Hosts />)} />
         <Route path="terminal" element={page(<Terminal />)} />
         <Route path="ops-tools" element={page(<RoleGate path="/ops-tools" node={<OpsTools />} />)} />

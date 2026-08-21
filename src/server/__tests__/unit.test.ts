@@ -188,3 +188,73 @@ test('auth: 会话过期后 currentUser 返回 null', async () => {
   mod.logout(fake)
   assert.equal(mod.currentUser(fake), null)
 })
+
+// —— 防火墙解析 ——
+import { parseFirewallRules, validateRuleInput, buildRuleCommand } from '../services/firewallService'
+
+test('firewall: parse iptables -S 输出', () => {
+  const out = [
+    '*filter',
+    '-P INPUT ACCEPT',
+    '-P FORWARD DROP',
+    '-P OUTPUT ACCEPT',
+    '-A INPUT -i lo -j ACCEPT',
+    '-A INPUT -p tcp -m tcp --dport 22 -j ACCEPT',
+    '-A INPUT -p tcp -m tcp --dport 80 -m comment --comment "web" -j ACCEPT',
+    '-A FORWARD -j DROP',
+    'COMMIT',
+  ].join('\n')
+  const { rules, policies } = parseFirewallRules(out)
+  assert.equal(policies.length, 3)
+  assert.equal(policies[0].chain, 'INPUT')
+  assert.equal(policies[0].policy, 'ACCEPT')
+  assert.equal(policies[1].policy, 'DROP')
+  assert.equal(rules.length, 4)
+  assert.equal(rules[0].chain, 'INPUT')
+  assert.equal(rules[0].action, 'ACCEPT')
+  assert.equal(rules[0].inInterface, 'lo')
+  assert.equal(rules[1].port, '22')
+  assert.equal(rules[1].action, 'ACCEPT')
+  assert.equal(rules[2].comment, 'web')
+  assert.equal(rules[2].port, '80')
+  assert.equal(rules[2].protocol, 'tcp')
+  assert.equal(rules[3].chain, 'FORWARD')
+  assert.equal(rules[3].action, 'DROP')
+})
+
+test('firewall: 空/无效输入安全', () => {
+  assert.deepEqual(parseFirewallRules('').rules, [])
+  assert.deepEqual(parseFirewallRules('# only comment\n').rules, [])
+  assert.deepEqual(parseFirewallRules('garbage\nNOT -A INPUT\n').rules, [])
+})
+
+test('firewall: validateRuleInput 防呆', () => {
+  // 缺少必填
+  assert.ok(validateRuleInput({ chain: '', action: '' } as any))
+  // 危险：DROP 全流量
+  const dropAll = validateRuleInput({ chain: 'INPUT', action: 'DROP' })
+  assert.ok(dropAll && dropAll.includes('危险'))
+  // 正常：DROP 特定端口
+  assert.equal(validateRuleInput({ chain: 'INPUT', action: 'DROP', protocol: 'tcp', port: '22' }), null)
+  // 正常：ACCEPT 特定端口
+  assert.equal(validateRuleInput({ chain: 'INPUT', action: 'ACCEPT', protocol: 'tcp', port: '80' }), null)
+  // 无效端口
+  const badPort = validateRuleInput({ chain: 'INPUT', action: 'ACCEPT', protocol: 'tcp', port: '0' })
+  assert.ok(badPort && badPort.includes('无效端口'))
+  // 未知链
+  assert.ok(validateRuleInput({ chain: 'FAKE', action: 'ACCEPT' }))
+})
+
+test('firewall: buildRuleCommand', () => {
+  const cmd = buildRuleCommand({ chain: 'INPUT', protocol: 'tcp', port: '443', action: 'ACCEPT', comment: 'https' })
+  assert.ok(cmd.includes('-A INPUT'))
+  assert.ok(cmd.includes('-p tcp'))
+  assert.ok(cmd.includes('--dport 443'))
+  assert.ok(cmd.includes('-j ACCEPT'))
+  assert.ok(cmd.includes('https'))
+  // 无端口
+  const cmd2 = buildRuleCommand({ chain: 'FORWARD', action: 'DROP' })
+  assert.ok(cmd2.includes('-A FORWARD'))
+  assert.ok(cmd2.includes('-j DROP'))
+  assert.ok(!cmd2.includes('--dport'))
+})

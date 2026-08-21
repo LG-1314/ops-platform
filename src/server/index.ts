@@ -35,6 +35,7 @@ import { authRouter } from './routes/auth'
 import { usersRouter } from './routes/users'
 import { monitorRouter } from './routes/monitor'
 import { auditRouter } from './routes/audit'
+import { firewallRouter } from './routes/firewall'
 import { currentUser } from './services/authService'
 import { memoryStore } from './store/memoryStore'
 import { logger } from './utils/logger'
@@ -108,6 +109,7 @@ export function createServer(): http.Server {
   app.use('/api/auth', authRouter)
   app.use('/api/users', usersRouter)
   app.use('/api/audit', auditRouter)
+  app.use('/api/firewall', firewallRouter)
 
   // 生产环境（Electron 打包后）：同源托管前端静态资源（dist）+ SPA fallback。
   // 打包后 dist 经 extraResources 解包到 resources/app-dist（真实目录，非 asar 内），

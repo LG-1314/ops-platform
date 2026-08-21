@@ -39,6 +39,9 @@ import type {
   GuardrailResult,
   GuardrailRun,
   DoloresResult,
+  FirewallCollectResult,
+  FirewallRule,
+  AddFirewallRuleInput,
   DoloresRun,
   DoloresTool,
   DashboardSummary,
@@ -302,6 +305,13 @@ export const api = {
     summary: () => get<MonitorSummary>('/monitor/summary'),
     healthHistory: (kind: 'db' | 'cluster', assetId: string, from?: string, to?: string) =>
       get<HealthPoint[]>('/monitor/health-history', { kind, assetId, from, to }),
+  },
+  firewall: {
+    collect: (assetId: string) => get<FirewallCollectResult>(`/firewall/${assetId}/collect`),
+    addRule: (assetId: string, input: AddFirewallRuleInput) =>
+      post<{ ok: boolean; message: string; rule?: FirewallRule }>(`/firewall/${assetId}/rule`, input),
+    deleteRule: (assetId: string, raw: string) =>
+      del<{ ok: boolean; message: string }>(`/firewall/${assetId}/rule?raw=${encodeURIComponent(raw)}`),
   },
 }
 

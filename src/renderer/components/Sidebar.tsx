@@ -27,6 +27,7 @@ import {
   Construction as IconTools,
   MonitorHeart as IconMonitor,
   ManageAccounts as IconUsers,
+  Shield as IconFirewall,
   ChevronLeft,
   ChevronRight,
 } from '@mui/icons-material'
@@ -79,6 +80,7 @@ const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
       { to: '/assets', label: '资产', icon: <IconAssets />, roles: ['admin'] },
       { to: '/clusters', label: '集群', icon: <IconClusters />, roles: ['admin'] },
       { to: '/databases', label: '数据库', icon: <IconDatabases />, roles: ['admin'] },
+      { to: '/firewall', label: '防火墙', icon: <IconFirewall />, roles: ['admin'] },
       { to: '/cloud', label: '云资源', icon: <IconCloud />, roles: ['admin'] },
     ],
   },

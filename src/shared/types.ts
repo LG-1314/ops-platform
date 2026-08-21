@@ -441,3 +441,61 @@ export interface ApiError {
   message: string
   detail?: string
 }
+
+// —— 防火墙管理 / 网络透视（SSH 采集自目标主机）——
+export interface FirewallRule {
+  chain: string // INPUT / OUTPUT / FORWARD ...
+  protocol: string // tcp / udp / icmp / all
+  source: string // 源地址（CIDR 或 IP）
+  destination: string // 目的地址
+  port: string // 目的端口（dport 或 dports，逗号分隔）
+  sport?: string // 源端口
+  inInterface?: string // 入接口
+  outInterface?: string // 出接口
+  action: string // ACCEPT / DROP / REJECT / MASQUERADE ...
+  comment?: string // 注释
+  raw: string // 原始规则（iptables -S 行，用于重建/删除）
+}
+export interface FirewallStatus {
+  available: boolean // iptables 是否可用
+  enabled: boolean // 是否有规则（防火墙启用）
+  defaultPolicies: { chain: string; policy: string }[]
+  ruleCount: number
+}
+export interface ListeningPort {
+  protocol: 'tcp' | 'udp'
+  address: string // 监听地址（如 0.0.0.0:22）
+  port: number
+  process: string // 关联进程名
+  pid: number
+}
+export interface NetworkConnection {
+  protocol: string
+  localAddress: string
+  localPort: number
+  remoteAddress: string
+  remotePort: number
+  state: string // ESTABLISHED / LISTEN / TIME_WAIT ...
+  process: string
+  bytesIn?: number // 累计接收字节（可选）
+  bytesOut?: number // 累计发送字节（可选）
+}
+export interface FirewallCollectResult {
+  assetId: string
+  host: string
+  collectedAt: string
+  status: FirewallStatus
+  rules: FirewallRule[]
+  ports: ListeningPort[]
+  connections: NetworkConnection[]
+}
+export interface AddFirewallRuleInput {
+  chain: string
+  protocol?: string // 可选（all / tcp / udp / icmp）
+  source?: string
+  destination?: string
+  port?: string
+  inInterface?: string
+  action: string
+  comment?: string
+}
