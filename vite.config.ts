@@ -82,11 +82,14 @@ export default defineConfig({
     outDir: 'dist',
     rollupOptions: {
       output: {
-        // 拆 vendor 独立 chunk，降低单 chunk 体积（消除 >500KB 告警 + 改善首屏缓存）
-        manualChunks: {
-          react: ['react', 'react-dom', 'react-router-dom'],
-          mui: ['@mui/material', '@mui/icons-material', '@emotion/react', '@emotion/styled'],
-          xterm: ['@xterm/xterm', '@xterm/addon-fit'],
+        // 拆 vendor 独立 chunk：所有 node_modules 依赖合并为单一 vendor chunk。
+        // 注意：不能把 react/react-dom/@emotion 拆进不同 chunk——@emotion 会内联部分 React
+        // 内部状态，跨 chunk 拆分会复制 React 实例，导致 __SECRET_INTERNALS 未初始化、
+        // 渲染进程直接黑屏（已实际踩坑）。xterm 独立拆出：仅终端页加载，其余页面不拉 334KB。
+        manualChunks(id: string): string | undefined {
+          if (!id.includes('node_modules')) return undefined
+          if (id.includes('@xterm')) return 'xterm'
+          return 'vendor'
         },
       },
     },
