@@ -174,6 +174,49 @@ test('alert-rules: 命中开单、重复评估去重、冷却期不重开', asyn
   memoryStore.getAlerts().filter((a) => a.title.includes('健康分阈值')).forEach((a) => memoryStore.removeAlert(a.id))
 })
 
+// —— 告警规则引擎：开单写入当前值/阈值/单位 ——
+test('alert-rules: 命中开单携带 currentValue/threshold/unit', async () => {
+  const { alertRuleService, resetAlertCooldown } = await import('../services/alertRuleService')
+  const { memoryStore } = await import('../store/memoryStore')
+  resetAlertCooldown()
+  // 独立固定健康分的资产，避免其他用例（监控探测等）改写种子资产健康分导致断言漂移
+  memoryStore.addAsset({
+    id: 'asset-threshold-test',
+    name: 'threshold-test',
+    type: 'server',
+    host: 'threshold-test',
+    source: 'manual',
+    tags: [],
+    createdAt: new Date().toISOString(),
+    healthScore: 64,
+    status: 'warn',
+  })
+  memoryStore.addAlertRule({
+    name: '健康分阈值-指标字段',
+    enabled: true,
+    scope: 'asset',
+    assetId: 'asset-threshold-test',
+    metric: 'healthScore',
+    operator: '<',
+    threshold: 80,
+    level: 'P2',
+  } as never)
+
+  const created = alertRuleService.evaluateAll()
+  assert.equal(created, 1)
+  const alert = memoryStore.getAlerts().find((a) => a.title.includes('健康分阈值-指标字段'))
+  assert.ok(alert)
+  assert.equal(alert.currentValue, 64)
+  assert.equal(alert.threshold, 80)
+  assert.equal(alert.unit, '分')
+
+  // 清理
+  memoryStore.removeAsset('asset-threshold-test')
+  memoryStore.getAlertRules().filter((r) => r.name === '健康分阈值-指标字段').forEach((r) => memoryStore.removeAlertRule(r.id))
+  memoryStore.getAlerts().filter((a) => a.title.includes('健康分阈值-指标字段')).forEach((a) => memoryStore.removeAlert(a.id))
+  resetAlertCooldown()
+})
+
 // —— 会话 TTL：过期即失效 ——
 test('auth: 会话过期后 currentUser 返回 null', async () => {
   const mod = await import('../services/authService')
@@ -257,4 +300,188 @@ test('firewall: buildRuleCommand', () => {
   assert.ok(cmd2.includes('-A FORWARD'))
   assert.ok(cmd2.includes('-j DROP'))
   assert.ok(!cmd2.includes('--dport'))
+})
+
+// —— 知识检索合并自维护知识 ——
+test('knowledge: search 合并自维护知识（用户录入可被检索命中）', async () => {
+  const { knowledgeService } = await import('../services/knowledgeService')
+  const { memoryStore } = await import('../store/memoryStore')
+  memoryStore.addKnowledge({
+    id: 'user-search-test',
+    title: '自定义测试条目-磁盘扩容专项',
+    content: '针对 /data 分区进行在线扩容的完整步骤',
+    tags: ['磁盘', '扩容'],
+    source: 'remote',
+    relatedAssets: [],
+  })
+  try {
+    const hits = knowledgeService.search('扩容') as { id: string }[]
+    assert.ok(hits.some((h) => h.id === 'user-search-test'))
+  } finally {
+    memoryStore.removeKnowledge('user-search-test')
+  }
+})
+
+test('knowledge: search 空查询返回空数组', async () => {
+  const { knowledgeService } = await import('../services/knowledgeService')
+  assert.deepEqual(knowledgeService.search(''), [])
+  assert.deepEqual(knowledgeService.search('   '), [])
+})
+
+// —— AI 智能体（角色化运维专家） ——
+test('ai: 智能体预置 6 个且支持 CRUD', async () => {
+  const { memoryStore } = await import('../store/memoryStore')
+  assert.ok(memoryStore.getAiAgents().length >= 6)
+  memoryStore.addAiAgent({
+    id: 'agent-test-1',
+    name: '测试智能体',
+    role: '测试',
+    description: '',
+    systemPrompt: '你是测试智能体',
+    icon: 'qa',
+    enabled: true,
+    createdAt: new Date().toISOString(),
+  })
+  assert.ok(memoryStore.getAiAgents().some((x) => x.id === 'agent-test-1'))
+  const updated = memoryStore.updateAiAgent('agent-test-1', { enabled: false })
+  assert.equal(updated?.enabled, false)
+  assert.ok(memoryStore.removeAiAgent('agent-test-1'))
+  assert.ok(!memoryStore.getAiAgents().some((x) => x.id === 'agent-test-1'))
+})
+
+test('ai: 未配置时 agentChat 抛出可读错误', async () => {
+  const { createAgent, agentChat, removeAgent } = await import('../services/aiService')
+  const a = createAgent({ name: 'no-key-agent', systemPrompt: 'test' })
+  try {
+    await assert.rejects(
+      () => agentChat(a.id, [{ role: 'user', content: 'hi' }]),
+      /未启用|API Key/
+    )
+  } finally {
+    removeAgent(a.id)
+  }
+})
+
+// —— AI 配置 ——
+test('ai: saveConfig 脱敏返回 + apiKey 加密存储', async () => {
+  const { saveConfig } = await import('../services/aiService')
+  const { memoryStore } = await import('../store/memoryStore')
+  const s = saveConfig({ baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini', apiKey: 'sk-test-123456', enabled: true })
+  assert.equal(s.hasApiKey, true)
+  assert.ok(!('apiKey' in s))
+  // 密文落盘：不存明文
+  const cfg = memoryStore.getAiConfig()
+  assert.ok(cfg?.apiKeyEnc)
+  assert.ok(!JSON.stringify(cfg).includes('sk-test-123456'))
+  // 空 apiKey 保留原密钥
+  const s2 = saveConfig({ model: 'gpt-4o' })
+  assert.equal(s2.model, 'gpt-4o')
+  assert.equal(s2.hasApiKey, true)
+  // 清理，避免影响其他测试
+  memoryStore.setAiConfig({ baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini', enabled: false })
+})
+
+// —— 服务检查解析 ——
+test('ssh: 服务行解析逻辑正确', () => {
+  // collectServices 走真实 SSH 连接，不适合单测；此处验证其依赖的行解析正则
+  const lines = [
+    'nginx.service  loaded active running   A high performance web server',
+    'mysqld.service  loaded active running   MySQL Server',
+  ]
+  const parsed = lines
+    .map((line) => line.trim().match(/^(\S+)\s+(\S+)\s+(\S+)\s+(.+)/))
+    .filter(Boolean)
+    .map((m) => m as RegExpMatchArray)
+  assert.equal(parsed.length, 2)
+  assert.equal(parsed[0][1], 'nginx.service')
+  assert.ok(parsed[0][4].includes('high performance web server'))
+})
+
+// —— 集群自检纯函数 ——
+import { parseEndpoint, certExpiry, parseCpuQuantity, parseMemQuantity } from '../services/k8sService'
+
+test('k8s: parseEndpoint 解析协议/域名/端口', () => {
+  assert.deepEqual(parseEndpoint('https://k8s.example.com:6443'), { host: 'k8s.example.com', port: 6443, secure: true })
+  assert.deepEqual(parseEndpoint('http://10.0.0.1'), { host: '10.0.0.1', port: 80, secure: false })
+  assert.equal(parseEndpoint('ftp://bad'), null)
+  assert.equal(parseEndpoint('not-a-url'), null)
+})
+
+test('k8s: certExpiry 判断证书到期', () => {
+  const now = new Date('2026-08-23T00:00:00Z')
+  assert.deepEqual(certExpiry('2026-08-24T00:00:00Z', now), { expired: false, daysLeft: 1 })
+  assert.equal(certExpiry('2026-08-22T00:00:00Z', now).expired, true)
+  assert.ok(Number.isNaN(certExpiry('invalid', now).daysLeft))
+})
+
+test('k8s: CPU/内存单位解析', () => {
+  assert.equal(parseCpuQuantity('2'), 2)
+  assert.equal(parseCpuQuantity('500m'), 0.5)
+  assert.equal(parseCpuQuantity('250000n'), 0.00025)
+  assert.equal(parseMemQuantity('1Gi'), 1024 ** 3)
+  assert.equal(parseMemQuantity('512Mi'), 512 * 1024 ** 2)
+  assert.equal(parseMemQuantity('1000'), 1000)
+})
+
+// —— 云资源变更 diff / 费用估算 ——
+import { diffResources, estimateMonthlyCost } from '../services/cloudService'
+
+test('cloud: estimateMonthlyCost 按规格线性估算', () => {
+  assert.equal(estimateMonthlyCost(0, 0), 0)
+  assert.equal(estimateMonthlyCost(2, 4), Math.round(20 + 2 * 18 + 4 * 8))
+})
+
+test('cloud: diffResources 检测新增/下线/规格变化', () => {
+  let n = 0
+  const genId = () => `id-${n++}`
+  const base = [
+    { id: 'i-1', name: 'web', type: 'CVM', region: 'gz', status: 'RUNNING', extra: { CPU: '2', Memory: '4' } },
+    { id: 'i-2', name: 'db', type: 'CVM', region: 'gz', status: 'RUNNING', extra: { CPU: '4', Memory: '8' } },
+  ]
+  const next = [
+    { ...base[0], status: 'STOPPED' },
+    { id: 'i-3', name: 'new', type: 'CVM', region: 'gz', status: 'RUNNING' },
+  ]
+  const changes = diffResources(base, next, 'acc-1', '测试账号', genId, '2026-08-23T00:00:00Z')
+  assert.equal(changes.length, 3)
+  const types = changes.map((c) => c.changeType).sort()
+  assert.deepEqual(types, ['add', 'change', 'remove'])
+  const changed = changes.find((c) => c.changeType === 'change')
+  assert.ok(changed?.detail.includes('RUNNING → STOPPED'))
+  const removed = changes.find((c) => c.changeType === 'remove')
+  assert.equal(removed?.resourceId, 'i-2')
+})
+
+// —— 服务巡检：systemd 状态解析 / 端口探测 ——
+import { parseSystemdActive, tcpCheck } from '../services/serviceCheckService'
+
+test('service-check: systemd 状态解析', () => {
+  assert.deepEqual(parseSystemdActive('active\n'), { active: true })
+  assert.deepEqual(parseSystemdActive('inactive'), { active: false, sub: 'inactive' })
+  assert.deepEqual(parseSystemdActive('failed\n'), { active: false, sub: 'failed' })
+  assert.deepEqual(parseSystemdActive(''), { active: false, sub: undefined })
+})
+
+test('service-check: 端口探测对明显不可达地址快速失败', async () => {
+  const err = await tcpCheck('127.0.0.1', 1, 1500)
+  assert.ok(err !== null)
+})
+
+// —— AI 供应商预设 ——
+import { AI_PROVIDERS } from '../services/aiService'
+
+test('ai: 供应商预设覆盖主流大模型 + 本地 Ollama', () => {
+  const ids = AI_PROVIDERS.map((p) => p.id)
+  assert.ok(ids.includes('openai'))
+  assert.ok(ids.includes('deepseek'))
+  assert.ok(ids.includes('qwen'))
+  assert.ok(ids.includes('ollama'))
+  const ollama = AI_PROVIDERS.find((p) => p.id === 'ollama')
+  assert.equal(ollama?.authType, 'none')
+  assert.ok(ollama?.baseUrl.includes('11434'))
+  // 每个预设都有 baseUrl 与推荐模型
+  for (const p of AI_PROVIDERS) {
+    assert.ok(p.baseUrl.startsWith('http'))
+    assert.ok(p.models.length > 0)
+  }
 })

@@ -1,10 +1,14 @@
 import { Router } from 'express'
+import { requireUser } from '../services/authService'
 import { asyncHandler, ok, fail } from '../utils/response'
 import { patrolService } from '../services/patrolService'
 import { logger } from '../utils/logger'
 import type { PatrolTask } from '@shared/types'
 
 export const patrolsRouter = Router()
+
+// 用户级鉴权：所有路由需携带有效会话 token（与 users/cloud/ai 等路由一致）
+patrolsRouter.use(requireUser)
 
 patrolsRouter.get('/', asyncHandler(async (_req, res) => {
   ok(res, patrolService.list())

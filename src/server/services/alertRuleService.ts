@@ -63,6 +63,17 @@ function metricValue(rule: AlertRule, asset: Asset): { value: number; label: str
   return null
 }
 
+/** 各指标的单位（资源类告警展示「当前 x% / 阈值 y%」用；reachable 为在线状态非数值，无单位） */
+const METRIC_UNIT: Partial<Record<AlertRule['metric'], string>> = {
+  latency: 'ms',
+  healthScore: '分',
+  cpu: '%',
+  mem: '%',
+  disk: '%',
+  netRx: 'KB/s',
+  netTx: 'KB/s',
+}
+
 function cmp(v: number, op: AlertRule['operator'], t: number): boolean {
   switch (op) {
     case '>':
@@ -157,6 +168,9 @@ export const alertRuleService = {
           title,
           assetId: asset.id,
           message: rule.message || `指标 ${rule.metric} = ${mv.label} ${rule.operator} ${rule.threshold}`,
+          currentValue: mv.value,
+          threshold: rule.threshold,
+          unit: METRIC_UNIT[rule.metric],
           state: 'active',
           createdAt: new Date().toISOString(),
         }

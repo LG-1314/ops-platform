@@ -33,7 +33,16 @@ export default function KpiCard({
             </Typography>
             <Typography
               variant="h5"
-              sx={{ fontWeight: 700, lineHeight: 1.2 }}
+              key={String(value)}
+              sx={{
+                fontWeight: 700,
+                lineHeight: 1.2,
+                animation: 'opsCountPop 0.35s ease',
+                '@keyframes opsCountPop': {
+                  from: { transform: 'scale(1.08)', opacity: 0.6 },
+                  to: { transform: 'scale(1)', opacity: 1 },
+                },
+              }}
             >
               {value}
             </Typography>

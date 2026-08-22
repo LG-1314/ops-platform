@@ -29,6 +29,9 @@ export const alertService = {
       state: (partial.state as AlertState) || 'active',
       createdAt: now,
       ackedBy: partial.ackedBy,
+      currentValue: partial.currentValue,
+      threshold: partial.threshold,
+      unit: partial.unit,
     }
     return memoryStore.addAlert(alert)
   },
@@ -40,6 +43,16 @@ export const alertService = {
     if (patch.state === 'resolved') p.resolvedAt = now
     if (patch.state !== 'resolved') p.resolvedAt = undefined // 重新激活/确认后清除旧解决时间
     return memoryStore.updateAlert(id, p)
+  },
+
+  /** 标记已读（幂等）：写入 readAt，未读告警不再高亮。 */
+  markRead(id: string): Alert | undefined {
+    return memoryStore.updateAlert(id, { readAt: new Date().toISOString() })
+  },
+
+  /** 置顶 / 取消置顶 */
+  setPinned(id: string, pinned: boolean): Alert | undefined {
+    return memoryStore.updateAlert(id, { pinned })
   },
 
   remove(id: string): boolean {

@@ -6,10 +6,12 @@ interface Props {
   text: string
   description?: string
   icon?: ReactNode
+  /** 空状态下方的操作按钮/入口（如「添加集群」） */
+  action?: ReactNode
 }
 
 // 精致空状态：渐变光晕 + 虚线环 + 语义图标，theme-aware，覆盖全站“暂无数据”场景。
-export default function EmptyState({ text, description, icon = <Inbox /> }: Props) {
+export default function EmptyState({ text, description, icon = <Inbox />, action }: Props) {
   const theme = useTheme()
   const primary = theme.palette.primary.main
   const info = theme.palette.info.main
@@ -66,6 +68,7 @@ export default function EmptyState({ text, description, icon = <Inbox /> }: Prop
           {description}
         </Typography>
       )}
+      {action && <Box sx={{ mt: 2 }}>{action}</Box>}
     </Box>
   )
 }

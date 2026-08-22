@@ -13,7 +13,7 @@ import { onUnauthorized } from '../capabilities/bus'
 const ADMIN_ONLY = [
   '/diagnostics', '/knowledge', '/relations', '/assets', '/patrols',
   '/automation', '/clusters', '/databases', '/cloud', '/ops-tools', '/users',
-  '/firewall',
+  '/firewall', '/service-checks',
 ]
 
 // 其余路由级懒加载：减小非默认页面 JS 体积，按需拉取 chunk。
@@ -34,6 +34,9 @@ const OpsTools = lazy(() => import('./pages/OpsTools'))
 const Monitor = lazy(() => import('./pages/Monitor'))
 const Users = lazy(() => import('./pages/Users'))
 const Firewall = lazy(() => import('./pages/Firewall'))
+const AiAssistant = lazy(() => import('./pages/AiAssistant'))
+const AgentWorkspace = lazy(() => import('./pages/AgentWorkspace'))
+const ServiceChecks = lazy(() => import('./pages/ServiceChecks'))
 
 function PageFallback() {
   return (
@@ -46,9 +49,21 @@ function PageFallback() {
   )
 }
 
-// 仅包裹页面内容，保持 Layout（侧边栏/顶栏）常驻不闪屏。
+// 仅包裹页面内容，保持 Layout（侧边栏/顶栏）常驻不闪屏；页面切换带淡入过渡动效。
 const page = (node: ReactNode) => (
-  <Suspense fallback={<PageFallback />}>{node}</Suspense>
+  <Suspense fallback={<PageFallback />}>
+    <Box
+      sx={{
+        animation: 'opsFadeIn 0.3s ease',
+        '@keyframes opsFadeIn': {
+          from: { opacity: 0, transform: 'translateY(4px)' },
+          to: { opacity: 1, transform: 'translateY(0)' },
+        },
+      }}
+    >
+      {node}
+    </Box>
+  </Suspense>
 )
 
 /** 登录守卫：未登录一律重定向登录页。 */
@@ -92,6 +107,7 @@ export default function App() {
         <Route path="assets" element={page(<RoleGate path="/assets" node={<Assets />} />)} />
         <Route path="alerts" element={page(<Alerts />)} />
         <Route path="patrols" element={page(<RoleGate path="/patrols" node={<Patrols />} />)} />
+        <Route path="service-checks" element={page(<RoleGate path="/service-checks" node={<ServiceChecks />} />)} />
         <Route path="automation" element={page(<RoleGate path="/automation" node={<Automation />} />)} />
         <Route path="clusters" element={page(<RoleGate path="/clusters" node={<Clusters />} />)} />
         <Route path="databases" element={page(<RoleGate path="/databases" node={<Databases />} />)} />
@@ -101,6 +117,8 @@ export default function App() {
         <Route path="terminal" element={page(<Terminal />)} />
         <Route path="ops-tools" element={page(<RoleGate path="/ops-tools" node={<OpsTools />} />)} />
         <Route path="monitor" element={page(<RoleGate path="/monitor" node={<Monitor />} />)} />
+        <Route path="ai-assistant" element={page(<AiAssistant />)} />
+        <Route path="agents" element={page(<AgentWorkspace />)} />
         <Route path="users" element={page(<RoleGate path="/users" node={<Users />} />)} />
         <Route path="settings" element={page(<Settings />)} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />

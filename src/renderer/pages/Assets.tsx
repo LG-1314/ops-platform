@@ -14,15 +14,18 @@ import {
   MenuItem,
   IconButton,
   Tooltip,
+  Chip,
   useTheme,
 } from '@mui/material'
-import { Search, Refresh, Add, DeleteOutline, Radar } from '@mui/icons-material'
+import { Search, Refresh, Add, DeleteOutline, Radar, Edit as EditIcon, CheckBox as IconSelect, Download as IconExport, Sell as IconTag } from '@mui/icons-material'
 import { useSearchParams } from 'react-router-dom'
 import { api } from '../../capabilities/bus'
-import type { Asset, AssetType, Status } from '@shared/types'
+import type { Asset, AssetType, Status, Credential } from '@shared/types'
 import DataTable, { Column } from '../components/DataTable'
 import StatusBadge from '../components/StatusBadge'
 import PageHeader from '../components/PageHeader'
+import KpiCard from '../components/KpiCard'
+import { Checkbox, Grid, FormControl, InputLabel, Select as MuiSelect, Typography } from '@mui/material'
 
 const TYPE_LABEL: Record<AssetType, string> = {
   server: '服务器',
@@ -54,8 +57,19 @@ export default function Assets() {
   const [type, setType] = useState('')
 
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState<AddForm>({ name: '', type: 'server', host: '', ip: '', port: '', tags: '' })
   const [submitting, setSubmitting] = useState(false)
+  const [credentials, setCredentials] = useState<Credential[]>([])
+  const [credentialId, setCredentialId] = useState('')
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  // 批量操作：勾选集合 / 批量打标签弹窗
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [tagOpen, setTagOpen] = useState(false)
+  const [bulkTags, setBulkTags] = useState('')
+  const [bulkTagBusy, setBulkTagBusy] = useState(false)
+  const [tagFilter, setTagFilter] = useState('')
 
   const load = () => {
     setLoading(true)
@@ -122,16 +136,46 @@ export default function Assets() {
   }
 
   const removeAsset = async (id: string) => {
+    const target = assets.find((a) => a.id === id)
+    if (!target) return
+    setDeleteTarget({ id, name: target.name })
+  }
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return
+    setDeleting(true)
+    setError('')
     try {
-      await api.assets.remove(id)
+      await api.assets.remove(deleteTarget.id)
+      setDeleteTarget(null)
       await load()
     } catch (e) {
       setError((e as Error).message || '删除失败')
+    } finally {
+      setDeleting(false)
     }
   }
 
   const openAdd = () => {
+    setEditingId(null)
     setForm({ name: '', type: 'server', host: '', ip: '', port: '', tags: '' })
+    setCredentialId('')
+    api.credentials.list().then(setCredentials).catch(() => {})
+    setDialogOpen(true)
+  }
+
+  const openEdit = (a: Asset) => {
+    setEditingId(a.id)
+    setForm({
+      name: a.name,
+      type: a.type,
+      host: a.host || '',
+      ip: a.ip || '',
+      port: a.port ? String(a.port) : '',
+      tags: (a.tags || []).join(', '),
+    })
+    setCredentialId(a.credentialId || '')
+    api.credentials.list().then(setCredentials).catch(() => {})
     setDialogOpen(true)
   }
 
@@ -143,19 +187,22 @@ export default function Assets() {
     setSubmitting(true)
     setError('')
     try {
-      await api.assets.create({
+      const payload = {
         name: form.name.trim(),
         type: form.type,
         host: form.host.trim(),
         ip: form.ip.trim() || undefined,
         port: form.port ? Number(form.port) : undefined,
         tags: form.tags.split(',').map((t) => t.trim()).filter(Boolean),
-        source: 'manual',
-      })
+        source: 'manual' as const,
+        credentialId: credentialId || undefined,
+      }
+      if (editingId) await api.assets.update(editingId, payload)
+      else await api.assets.create(payload)
       setDialogOpen(false)
       await load()
     } catch (e) {
-      setError((e as Error).message || '添加失败')
+      setError((e as Error).message || '保存失败')
     } finally {
       setSubmitting(false)
     }
@@ -168,14 +215,125 @@ export default function Assets() {
       (a.ip ?? '').includes(q) ||
       (a.host ?? '').includes(q)
     const okT = !type || a.type === type
-    return okQ && okT
+    const okTag = !tagFilter || (a.tags || []).includes(tagFilter)
+    return okQ && okT && okTag
   })
 
+  // 统计：总量 / 在线 / 离线 / 异常（健康分 < 60 或 status 异常）
+  const total = filtered.length
+  const online = filtered.filter((a) => a.reachable === true).length
+  const offline = filtered.filter((a) => a.reachable === false).length
+  const abnormal = filtered.filter((a) => a.status !== 'ok' || a.healthScore < 60).length
+
+  const allTags = Array.from(new Set(assets.flatMap((a) => a.tags || []))).sort()
+
+  const toggleSelect = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+  const toggleAll = () => {
+    setSelected((prev) => (prev.size === filtered.length && filtered.length > 0 ? new Set() : new Set(filtered.map((a) => a.id))))
+  }
+
+  // 批量删除（逐个调用现有单删接口，成功后清空选择）
+  const bulkDelete = async () => {
+    const ids = [...selected]
+    if (!ids.length || !window.confirm(`确认批量删除选中的 ${ids.length} 个资产？此操作不可恢复。`)) return
+    setError('')
+    let failed = 0
+    for (const id of ids) {
+      try {
+        await api.assets.remove(id)
+      } catch {
+        failed += 1
+      }
+    }
+    setSelected(new Set())
+    await load()
+    if (failed) setError(`批量删除完成，${failed} 项失败`)
+  }
+
+  // 批量编辑标签（覆盖式写入，便于统一打标 / 归档分组）
+  const bulkTag = async () => {
+    if (!selected.size) return
+    const tags = bulkTags.split(',').map((t) => t.trim()).filter(Boolean)
+    setBulkTagBusy(true)
+    setError('')
+    let failed = 0
+    for (const id of selected) {
+      const asset = assets.find((a) => a.id === id)
+      try {
+        await api.assets.update(id, { tags })
+      } catch {
+        failed += 1
+      }
+      void asset
+    }
+    setBulkTagBusy(false)
+    setTagOpen(false)
+    setBulkTags('')
+    setSelected(new Set())
+    await load()
+    if (failed) setError(`批量打标签完成，${failed} 项失败`)
+  }
+
+  // 导出 CSV（浏览器端生成下载）
+  const exportCsv = () => {
+    const header = ['名称', '类型', '主机', 'IP', '标签', '状态', '健康分', '延迟(ms)', '最后检查']
+    const rows = filtered.map((a) => [
+      a.name,
+      TYPE_LABEL[a.type] || a.type,
+      a.host,
+      a.ip ?? '',
+      (a.tags || []).join('|'),
+      a.reachable === false ? '离线' : a.reachable ? '在线' : '未知',
+      a.healthScore != null ? String(a.healthScore) : '',
+      a.latencyMs != null ? String(a.latencyMs) : '',
+      a.lastCheckAt ? new Date(a.lastCheckAt).toLocaleString('zh-CN', { hour12: false }) : '',
+    ])
+    const csv = [header, ...rows].map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n')
+    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `资产台账-${new Date().toISOString().slice(0, 10)}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   const cols: Column<Asset>[] = [
+    {
+      key: 'select',
+      label: '选择',
+      width: 48,
+      render: (r) => (
+        <Checkbox
+          size="small"
+          checked={selected.has(r.id)}
+          onChange={() => toggleSelect(r.id)}
+          onClick={(e) => e.stopPropagation()}
+        />
+      ),
+    },
     { key: 'name', label: '名称' },
     { key: 'type', label: '类型', render: (r) => TYPE_LABEL[r.type] },
     { key: 'host', label: '主机' },
     { key: 'ip', label: 'IP', render: (r) => r.ip ?? '—' },
+    {
+      key: 'tags',
+      label: '标签',
+      render: (r) => (
+        <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap sx={{ maxWidth: 220 }}>
+          {(r.tags || []).slice(0, 3).map((t) => (
+            <Chip key={t} size="small" label={t} variant="outlined" sx={{ height: 20, fontSize: 11 }} />
+          ))}
+        </Stack>
+      ),
+    },
     {
       key: 'reachable',
       label: '可达',
@@ -202,7 +360,7 @@ export default function Assets() {
       key: 'healthScore',
       label: '健康分',
       align: 'right',
-      render: (r) => r.healthScore,
+      render: (r) => (r.reachable === false || r.healthScore == null ? '—' : r.healthScore),
     },
     {
       key: 'latencyMs',
@@ -221,6 +379,11 @@ export default function Assets() {
       align: 'right',
       render: (r) => (
         <Stack direction="row" spacing={0.5} justifyContent="flex-end">
+          <Tooltip title="编辑">
+            <IconButton size="small" onClick={() => openEdit(r)}>
+              <EditIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
           <Tooltip title="立即探测">
             <IconButton size="small" onClick={() => probeOne(r.id)} disabled={probingId === r.id}>
               {probingId === r.id ? <CircularProgress size={16} /> : <Radar fontSize="small" />}
@@ -272,6 +435,22 @@ export default function Assets() {
         </MuiAlert>
       )}
 
+      {/* 资产数据看板 */}
+      <Grid container spacing={2} sx={{ mb: 2 }}>
+        <Grid item xs={6} md={3}>
+          <KpiCard title="资产总量" value={total} icon={<Add />} />
+        </Grid>
+        <Grid item xs={6} md={3}>
+          <KpiCard title="在线" value={online} icon={<IconSelect />} color={theme.palette.success.main} />
+        </Grid>
+        <Grid item xs={6} md={3}>
+          <KpiCard title="离线" value={offline} icon={<IconSelect />} color={offline ? theme.palette.error.main : theme.palette.text.secondary} />
+        </Grid>
+        <Grid item xs={6} md={3}>
+          <KpiCard title="异常" value={abnormal} icon={<IconSelect />} color={abnormal ? theme.palette.warning.main : theme.palette.text.secondary} />
+        </Grid>
+      </Grid>
+
       <Stack direction="row" spacing={1} mb={2}>
         <TextField
           size="small"
@@ -302,10 +481,45 @@ export default function Assets() {
             </MenuItem>
           ))}
         </TextField>
+        <FormControl size="small" sx={{ minWidth: 140 }}>
+          <InputLabel>标签</InputLabel>
+          <MuiSelect label="标签" value={tagFilter} onChange={(e) => setTagFilter(e.target.value)}>
+            <MenuItem value="">全部</MenuItem>
+            {allTags.map((t) => (
+              <MenuItem key={t} value={t}>
+                {t}
+              </MenuItem>
+            ))}
+          </MuiSelect>
+        </FormControl>
         <Button variant="outlined" onClick={load} disabled={loading}>
           筛选
         </Button>
+        <Box sx={{ flexGrow: 1 }} />
+        <Button variant="outlined" startIcon={<IconExport />} onClick={exportCsv} disabled={filtered.length === 0}>
+          导出 CSV
+        </Button>
       </Stack>
+
+      {/* 批量操作工具栏 */}
+      {selected.size > 0 && (
+        <Stack direction="row" spacing={1.5} alignItems="center" mb={2} sx={{ p: 1.5, borderRadius: 2, border: 1, borderColor: 'divider', bgcolor: 'action.hover' }}>
+          <Checkbox size="small" checked={filtered.length > 0 && selected.size === filtered.length} onChange={toggleAll} />
+          <Typography variant="body2">
+            已选 <b>{selected.size}</b> 项
+          </Typography>
+          <Box sx={{ flexGrow: 1 }} />
+          <Button size="small" variant="outlined" startIcon={<IconTag />} onClick={() => setTagOpen(true)}>
+            批量打标签
+          </Button>
+          <Button size="small" variant="outlined" color="error" startIcon={<DeleteOutline />} onClick={() => void bulkDelete()}>
+            批量删除
+          </Button>
+          <Button size="small" color="inherit" onClick={() => setSelected(new Set())}>
+            清空
+          </Button>
+        </Stack>
+      )}
 
       {loading ? (
         <Box display="flex" justifyContent="center" py={6}>
@@ -321,7 +535,7 @@ export default function Assets() {
         maxWidth="xs"
         fullWidth
       >
-        <DialogTitle>添加主机</DialogTitle>
+        <DialogTitle>{editingId ? '编辑资产' : '添加主机'}</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
             <TextField
@@ -372,6 +586,22 @@ export default function Assets() {
               value={form.tags}
               onChange={(e) => setForm({ ...form, tags: e.target.value })}
             />
+            <TextField
+              select
+              size="small"
+              label="SSH 凭据（可选，采集指标/终端/服务检查用）"
+              value={credentialId}
+              onChange={(e) => setCredentialId(e.target.value)}
+            >
+              <MenuItem value="">
+                <em>不关联</em>
+              </MenuItem>
+              {credentials.filter((c) => c.kind === 'ssh').map((c) => (
+                <MenuItem key={c.id} value={c.id}>
+                  {c.name}（{c.username || '-'}）
+                </MenuItem>
+              ))}
+            </TextField>
           </Stack>
         </DialogContent>
         <DialogActions>
@@ -379,7 +609,48 @@ export default function Assets() {
             取消
           </Button>
           <Button variant="contained" onClick={submitAdd} disabled={submitting}>
-            {submitting ? '添加中…' : '添加'}
+            {submitting ? '保存中…' : editingId ? '保存' : '添加'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* 批量打标签 */}
+      <Dialog open={tagOpen} onClose={() => !bulkTagBusy && setTagOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>批量打标签（{selected.size} 项）</DialogTitle>
+        <DialogContent>
+          <Stack spacing={1.5} sx={{ mt: 1 }}>
+            <TextField
+              size="small"
+              label="标签（逗号分隔，覆盖式写入）"
+              placeholder="web,生产,2026"
+              value={bulkTags}
+              onChange={(e) => setBulkTags(e.target.value)}
+            />
+            <Typography variant="caption" color="text.secondary">
+              全部选中资产将被替换为以上标签组合，可用于统一分组 / 归档标记。
+            </Typography>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setTagOpen(false)} disabled={bulkTagBusy}>
+            取消
+          </Button>
+          <Button variant="contained" onClick={() => void bulkTag()} disabled={bulkTagBusy}>
+            {bulkTagBusy ? '处理中…' : '应用'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* 删除确认 */}
+      <Dialog open={deleteTarget !== null} onClose={() => setDeleteTarget(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>确认删除</DialogTitle>
+        <DialogContent>
+          确定要删除资产「{deleteTarget?.name}」吗？此操作不可撤销，关联的告警与监控数据将一并移除。
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteTarget(null)}>取消</Button>
+          <Button color="error" variant="contained" onClick={() => void confirmDelete()} disabled={deleting}>
+            {deleting ? '删除中…' : '删除'}
           </Button>
         </DialogActions>
       </Dialog>

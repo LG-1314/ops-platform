@@ -114,6 +114,7 @@ export function buildTheme(mode: Mode = 'dark'): Theme {
               borderColor:
                 mode === 'dark' ? 'rgba(124,156,255,0.35)' : 'rgba(30,58,138,0.28)',
               boxShadow: sh.md,
+              transform: 'translateY(-1px)',
             },
           },
         },

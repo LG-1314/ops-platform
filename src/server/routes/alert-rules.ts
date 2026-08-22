@@ -1,8 +1,12 @@
 import { Router } from 'express'
+import { requireUser } from '../services/authService'
 import { asyncHandler, ok, fail } from '../utils/response'
 import { alertRuleService } from '../services/alertRuleService'
 
 export const alertRulesRouter = Router()
+
+// 用户级鉴权：所有路由需携带有效会话 token（与 users/cloud/ai 等路由一致）
+alertRulesRouter.use(requireUser)
 
 alertRulesRouter.get('/', asyncHandler(async (_req, res) => {
   ok(res, alertRuleService.list())

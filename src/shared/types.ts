@@ -126,6 +126,16 @@ export interface Alert {
   updatedAt?: string
   /** 解决时间（state=resolved 时写入），驱动「已恢复」趋势线 */
   resolvedAt?: string
+  /** 触发告警时的指标当前值（资源类告警：CPU/内存/磁盘使用率等） */
+  currentValue?: number
+  /** 触发告警的规则阈值 */
+  threshold?: number
+  /** 指标单位（% / ms / KB/s 等） */
+  unit?: string
+  /** 已读时间（用户查看过详情/标记已读后写入；未读为 undefined） */
+  readAt?: string
+  /** 是否置顶（列表优先展示） */
+  pinned?: boolean
 }
 
 // —— 仪表盘 ——
@@ -183,6 +193,10 @@ export interface ClusterNode {
   role: string
   cpu: string
   memory: string
+  /** metrics-server 可用时的 CPU 使用率（0-100），不可用时缺省 */
+  cpuUsagePct?: number
+  /** metrics-server 可用时的内存使用率（0-100），不可用时缺省 */
+  memoryUsagePct?: number
 }
 export interface ClusterWorkload {
   name: string
@@ -190,6 +204,20 @@ export interface ClusterWorkload {
   kind: string
   status: string
   replicas: string
+}
+export interface ClusterServiceInfo {
+  name: string
+  namespace: string
+  type: string
+  clusterIP: string
+  ports: string
+  readyEndpoints: number
+}
+/** 集群连接自检单项结果 */
+export interface ClusterDiagItem {
+  item: string
+  ok: boolean
+  detail: string
 }
 export interface AgentStatus {
   name: string
@@ -201,6 +229,7 @@ export interface ClusterDetail {
   nodes: ClusterNode[]
   workloads: ClusterWorkload[]
   agents: AgentStatus[]
+  services?: ClusterServiceInfo[]
 }
 
 // —— OpenClaw Guardrails（防呆检查：命令/变更执行前的风险预检）——
@@ -362,6 +391,10 @@ export interface K8sNodeInfo {
   cpu: string
   memory: string
   status: Status
+  /** metrics-server 可用时的 CPU 使用率（0-100），不可用时缺省 */
+  cpuUsagePct?: number
+  /** metrics-server 可用时的内存使用率（0-100），不可用时缺省 */
+  memoryUsagePct?: number
 }
 export interface K8sWorkloadInfo {
   name: string
@@ -380,6 +413,8 @@ export interface CloudAccount {
   accessKey?: string
   credentialId?: string
   createdAt: string
+  /** 最近一次资源同步时间 */
+  lastSyncAt?: string
 }
 export interface CloudResource {
   id: string
@@ -389,6 +424,21 @@ export interface CloudResource {
   zone?: string
   status: string
   extra?: Record<string, string>
+  /** 月度费用估算（元） */
+  monthlyCost?: number
+  /** 到期时间（ISO 字符串），包年包月实例才有 */
+  expireAt?: string
+}
+/** 云资源同步变更日志（新增/下线/规格变化） */
+export interface CloudChangeLog {
+  id: string
+  accountId: string
+  accountName: string
+  resourceId: string
+  resourceName: string
+  changeType: 'add' | 'remove' | 'change'
+  detail: string
+  at: string
 }
 
 // —— 告警规则引擎 ——
@@ -455,6 +505,18 @@ export interface FirewallRule {
   action: string // ACCEPT / DROP / REJECT / MASQUERADE ...
   comment?: string // 注释
   raw: string // 原始规则（iptables -S 行，用于重建/删除）
+  /** 命中包数（iptables -L -v -x 计数） */
+  packets?: number
+  /** 命中字节数 */
+  bytes?: number
+}
+export interface FirewallTraffic {
+  totalPackets: number
+  totalBytes: number
+  dropPackets: number
+  dropBytes: number
+  dropHits: number // 产生拦截命中的规则数
+  collectedAt: string
 }
 export interface FirewallStatus {
   available: boolean // iptables 是否可用
@@ -488,6 +550,7 @@ export interface FirewallCollectResult {
   rules: FirewallRule[]
   ports: ListeningPort[]
   connections: NetworkConnection[]
+  traffic?: FirewallTraffic
 }
 export interface AddFirewallRuleInput {
   chain: string
@@ -498,4 +561,72 @@ export interface AddFirewallRuleInput {
   inInterface?: string
   action: string
   comment?: string
+}
+
+// —— AI 大模型配置 ——
+export interface AiConfig {
+  /** 服务端 API 基础地址（如 https://api.openai.com/v1） */
+  baseUrl: string
+  /** 加密后的 API Key */
+  apiKeyEnc?: string
+  /** 模型名称（如 gpt-4o-mini、deepseek-chat、qwen-plus） */
+  model: string
+  /** 功能是否启用 */
+  enabled: boolean
+  /** 供应商标识（openai/deepseek/qwen/doubao/zhipu/kimi/ollama 等，用于兼容层路由） */
+  provider?: string
+  /** 采样温度 0-1（默认 0.4） */
+  temperature?: number
+}
+
+/** AI 供应商预设（前端展示 + 兼容层路由依据） */
+export interface AiProviderDef {
+  id: string
+  label: string
+  baseUrl: string
+  models: string[]
+  /** bearer=标准 Authorization 头；none=本地模型无需鉴权（Ollama） */
+  authType: 'bearer' | 'none'
+}
+
+// —— AI 智能体（角色化运维专家） ——
+export interface AiAgent {
+  id: string
+  name: string
+  role: string // 角色标题（如「故障排查专家」）
+  description: string
+  systemPrompt: string
+  /** 图标标识（前端映射，如 troubleshoot / patrol / deploy / log / qa / risk / security） */
+  icon?: string
+  enabled: boolean
+  createdAt: string
+}
+
+// —— 服务巡检（进程 / 端口 / systemd 服务存活检测 + 自愈）——
+export interface ServiceCheckResult {
+  alive: boolean
+  detail: string
+  checkedAt: string
+  /** 自愈动作是否已执行（autoHeal 开启且检测失败时） */
+  healed?: boolean
+  healDetail?: string
+}
+export interface ServiceCheck {
+  id: string
+  name: string
+  /** 关联资产 id */
+  assetId: string
+  /** 检查类型：进程存活 / 端口连通 / systemd 服务状态 */
+  checkType: 'process' | 'port' | 'systemd'
+  /** 进程名或 systemd 服务名 */
+  serviceName: string
+  /** port 检查的 TCP 端口 */
+  port?: number
+  /** 期望状态：true=应存活（异常告警），false=应停止（残留告警） */
+  expectAlive: boolean
+  /** 检测失败时自动执行 systemctl restart 自愈 */
+  autoHeal: boolean
+  enabled: boolean
+  lastResult?: ServiceCheckResult
+  createdAt: string
 }

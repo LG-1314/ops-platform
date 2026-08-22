@@ -1,5 +1,5 @@
 import crypto from 'node:crypto'
-import type { CloudAccount, CloudResource } from '@shared/types'
+import type { CloudAccount, CloudChangeLog, CloudResource } from '@shared/types'
 import { credentialService } from './credentialService'
 
 function sha256hex(s: string | Buffer): string {
@@ -97,6 +97,48 @@ async function aliRequest(
   return json
 }
 
+/** 按规格粗略估算月度费用（元/月）：基础成本 + CPU/内存线性叠加，仅用于账单概览参考。 */
+export function estimateMonthlyCost(cpuCores: number, memoryGB: number): number {
+  if (!cpuCores && !memoryGB) return 0
+  const v = Math.round(20 + cpuCores * 18 + memoryGB * 8)
+  return v > 0 ? v : 0
+}
+
+/** 资源快照 diff：返回新增/下线/变化（状态或规格变动）明细，用于变更日志。 */
+export function diffResources(
+  prev: CloudResource[],
+  next: CloudResource[],
+  accountId: string,
+  accountName: string,
+  genId: () => string,
+  now = new Date().toISOString(),
+): CloudChangeLog[] {
+  const prevMap = new Map(prev.map((r) => [r.id, r]))
+  const nextMap = new Map(next.map((r) => [r.id, r]))
+  const out: CloudChangeLog[] = []
+  for (const r of next) {
+    const p = prevMap.get(r.id)
+    if (!p) {
+      out.push({ id: genId(), accountId, accountName, resourceId: r.id, resourceName: r.name, changeType: 'add', detail: `新实例 ${r.type}（${r.region}）`, at: now })
+      continue
+    }
+    if (p.status !== r.status || p.extra?.CPU !== r.extra?.CPU || p.extra?.Memory !== r.extra?.Memory) {
+      const parts: string[] = []
+      if (p.status !== r.status) parts.push(`状态 ${p.status} → ${r.status}`)
+      if (p.extra?.CPU !== r.extra?.CPU || p.extra?.Memory !== r.extra?.Memory) {
+        parts.push(`规格 ${p.extra?.CPU || '?'}核/${p.extra?.Memory || '?'}GB → ${r.extra?.CPU || '?'}核/${r.extra?.Memory || '?'}GB`)
+      }
+      out.push({ id: genId(), accountId, accountName, resourceId: r.id, resourceName: r.name, changeType: 'change', detail: parts.join('；'), at: now })
+    }
+  }
+  for (const p of prev) {
+    if (!nextMap.has(p.id)) {
+      out.push({ id: genId(), accountId, accountName, resourceId: p.id, resourceName: p.name, changeType: 'remove', detail: `实例已下线（原状态 ${p.status}）`, at: now })
+    }
+  }
+  return out
+}
+
 /** 列出云账号下的计算实例资源；无凭据或签名失败均抛出清晰错误。 */
 export async function listResources(account: CloudAccount): Promise<CloudResource[]> {
   if (!account.credentialId) throw new Error('未配置云凭据')
@@ -115,29 +157,46 @@ export async function listResources(account: CloudAccount): Promise<CloudResourc
       { Limit: 50 }
     )
     const list = (resp.InstanceSet as Record<string, unknown>[]) || []
-    return list.map((it) => ({
-      id: String(it.InstanceId),
-      name: String(it.InstanceName || it.InstanceId),
-      type: 'CVM',
-      region: String((it.Placement as Record<string, unknown>)?.Zone ?? region),
-      zone: String((it.Placement as Record<string, unknown>)?.Zone ?? ''),
-      status: String(it.InstanceState ?? 'Unknown'),
-      extra: { CPU: String(it.CPU ?? ''), Memory: String(it.Memory ?? '') },
-    }))
+    return list.map((it) => {
+      const cpu = Number(it.CPU ?? 0) || 0
+      const mem = Number(it.Memory ?? 0) || 0
+      // 腾讯云 ExpiredTime 为 unix 秒；按量计费实例无到期时间
+      const expiredAtSec = Number(it.ExpiredTime ?? 0)
+      return {
+        id: String(it.InstanceId),
+        name: String(it.InstanceName || it.InstanceId),
+        type: 'CVM',
+        region: String((it.Placement as Record<string, unknown>)?.Zone ?? region),
+        zone: String((it.Placement as Record<string, unknown>)?.Zone ?? ''),
+        status: String(it.InstanceState ?? 'Unknown'),
+        extra: { CPU: String(it.CPU ?? ''), Memory: String(it.Memory ?? '') },
+        monthlyCost: estimateMonthlyCost(cpu, mem),
+        expireAt: expiredAtSec > 0 ? new Date(expiredAtSec * 1000).toISOString() : undefined,
+      }
+    })
   }
 
   if (account.provider === 'aliyun') {
     const resp = await aliRequest('DescribeInstances', region, secret.accessKey ?? '', secret.secretKey ?? '')
     const list = (resp.Instances as Record<string, unknown> & { Instance?: Record<string, unknown>[] })?.Instance || []
-    return list.map((it) => ({
-      id: String(it.InstanceId),
-      name: String(it.InstanceName || it.InstanceId),
-      type: 'ECS',
-      region,
-      zone: String(it.ZoneId ?? ''),
-      status: String(it.Status ?? 'Unknown'),
-      extra: { CPU: String(it.Cpu ?? ''), Memory: String(it.Memory ?? '') },
-    }))
+    return list.map((it) => {
+      const cpu = Number(it.Cpu ?? 0) || 0
+      const mem = Number(it.Memory ?? 0) || 0
+      // 阿里云 ExpiredTime 为 ISO 字符串；按量计费为空
+      const rawExpire = String(it.ExpiredTime ?? '')
+      const expireAt = rawExpire && !Number.isNaN(new Date(rawExpire).getTime()) ? new Date(rawExpire).toISOString() : undefined
+      return {
+        id: String(it.InstanceId),
+        name: String(it.InstanceName || it.InstanceId),
+        type: 'ECS',
+        region,
+        zone: String(it.ZoneId ?? ''),
+        status: String(it.Status ?? 'Unknown'),
+        extra: { CPU: String(it.Cpu ?? ''), Memory: String(it.Memory ?? '') },
+        monthlyCost: estimateMonthlyCost(cpu, mem),
+        expireAt,
+      }
+    })
   }
 
   throw new Error('不支持的云厂商')

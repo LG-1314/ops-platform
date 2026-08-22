@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { asyncHandler, ok, fail } from '../utils/response'
 import { requireUser } from '../services/authService'
 import { memoryStore } from '../store/memoryStore'
-import { detail as k8sDetail } from '../services/k8sService'
+import { detail as k8sDetail, diagnose as k8sDiagnose } from '../services/k8sService'
 import { paginate } from '../utils/paginate'
 import { logger } from '../utils/logger'
 import type { ClusterInfo } from '@shared/types'
@@ -60,6 +60,13 @@ clustersRouter.post('/:id/scan', requireUser, asyncHandler(async (req, res) => {
     logger.error(`[clusters] scan failed: ${e instanceof Error ? e.stack || e.message : String(e)}`)
     fail(res, 502, '集群连接失败，请检查 endpoint / 凭据 / 网络')
   }
+}))
+
+// 连接一键自检：逐项检测 endpoint/DNS/端口/证书/凭据/API Server，永不 500（单项失败自报告）
+clustersRouter.post('/:id/diagnose', requireUser, asyncHandler(async (req, res) => {
+  const cluster = memoryStore.getClusters().find((c) => c.id === req.params.id)
+  if (!cluster) return fail(res, 404, 'cluster not found')
+  ok(res, { items: await k8sDiagnose(cluster) })
 }))
 
 // 更新集群（名称 / endpoint / 关联凭据 / 认证类型）

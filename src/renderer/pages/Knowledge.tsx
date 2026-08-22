@@ -21,7 +21,7 @@ import {
   Tabs,
   Tab,
 } from '@mui/material'
-import { Search, ArticleOutlined, Add as IconAdd, Delete as IconDelete, LibraryBooks } from '@mui/icons-material'
+import { Search, ArticleOutlined, Add as IconAdd, Delete as IconDelete, LibraryBooks, Edit as IconEdit } from '@mui/icons-material'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { api } from '../../capabilities/bus'
 import type { KnowledgeHit } from '@shared/types'
@@ -69,6 +69,7 @@ export default function Knowledge() {
 
   // 新增知识表单
   const [open, setOpen] = useState(false)
+  const [editId, setEditId] = useState<string | null>(null)
   const [form, setForm] = useState({ title: '', content: '', tags: '' })
   const [saving, setSaving] = useState(false)
 
@@ -138,6 +139,12 @@ export default function Knowledge() {
     if (tab === 'library') void loadLibrary()
   }, [tab])
 
+  const openAdd = () => {
+    setEditId(null)
+    setForm({ title: '', content: '', tags: '' })
+    setOpen(true)
+  }
+
   const onSubmit = async () => {
     if (!form.title.trim() || !form.content.trim()) {
       setLibError('标题与内容为必填')
@@ -146,17 +153,19 @@ export default function Knowledge() {
     setSaving(true)
     setLibError('')
     try {
-      await api.knowledge.create({
+      const payload = {
         title: form.title.trim(),
         content: form.content.trim(),
         tags: form.tags.split(',').map((t) => t.trim()).filter(Boolean),
         source: 'remote',
-      })
+      }
+      if (editId) await api.knowledge.update(editId, payload)
+      else await api.knowledge.create(payload)
       setOpen(false)
       setForm({ title: '', content: '', tags: '' })
       await loadLibrary()
     } catch (e) {
-      setLibError((e as Error).message || '创建失败')
+      setLibError((e as Error).message || '保存失败')
     } finally {
       setSaving(false)
     }
@@ -294,7 +303,7 @@ export default function Knowledge() {
             <Button
               variant="contained"
               startIcon={<IconAdd />}
-              onClick={() => { setForm({ title: '', content: '', tags: '' }); setOpen(true) }}
+              onClick={openAdd}
             >
               新增知识
             </Button>
@@ -392,9 +401,9 @@ export default function Knowledge() {
         </>
       )}
 
-      {/* 新增知识 */}
+      {/* 新增 / 编辑知识 */}
       <Dialog open={open} onClose={() => setOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>新增知识</DialogTitle>
+        <DialogTitle>{editId ? '编辑知识' : '新增知识'}</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
             <TextField
@@ -460,6 +469,19 @@ export default function Knowledge() {
           )}
         </DialogContent>
         <DialogActions>
+          {detail && !detail.id.startsWith('kb-') && (
+            <Button
+              startIcon={<IconEdit />}
+              onClick={() => {
+                setEditId(detail.id)
+                setForm({ title: detail.title, content: detail.content, tags: (detail.tags || []).join(',') })
+                setOpen(true)
+                setDetail(null)
+              }}
+            >
+              编辑
+            </Button>
+          )}
           <Button onClick={closeDetail}>关闭</Button>
         </DialogActions>
       </Dialog>

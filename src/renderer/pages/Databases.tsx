@@ -28,9 +28,11 @@ import {
   Delete as IconDelete,
   MonitorHeart as IconHealth,
   Refresh as IconRefresh,
+  SmartToy as IconAi,
 } from '@mui/icons-material'
 import { api } from '../../capabilities/bus'
 import type { DbConnection, DbHealth, DbType, Status } from '@shared/types'
+import AiDialog from '../components/AiDialog'
 
 function statusColor(theme: Theme, s: Status): string {
   if (s === 'ok') return theme.palette.success.main
@@ -59,6 +61,7 @@ export default function Databases() {
   const [open, setOpen] = useState(false)
   const [health, setHealth] = useState<DbHealth | null>(null)
   const [healthOpen, setHealthOpen] = useState(false)
+  const [aiCtx, setAiCtx] = useState<{ title: string; payload: Record<string, unknown> } | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
   const [form, setForm] = useState<{
@@ -326,9 +329,33 @@ export default function Databases() {
           )}
         </DialogContent>
         <DialogActions>
+          <Button
+            startIcon={<IconAi />}
+            disabled={!health}
+            onClick={() => health && setAiCtx({
+              title: `AI 分析：${conns.find((c) => c.id === health.connectionId)?.name || ''}`,
+              payload: {
+                数据库: health.connectionId,
+                连通: health.connected,
+                版本: health.version,
+                指标: (health.metrics || []).map((m) => `${m.name}=${m.value}`).join(', '),
+                错误: health.error,
+              },
+            })}
+          >
+            AI 分析
+          </Button>
           <Button onClick={() => setHealthOpen(false)}>关闭</Button>
         </DialogActions>
       </Dialog>
+
+      {/* AI 分析 */}
+      <AiDialog
+        open={!!aiCtx}
+        title={aiCtx?.title ?? ''}
+        context={aiCtx ? { kind: 'resource', payload: aiCtx.payload } : null}
+        onClose={() => setAiCtx(null)}
+      />
     </Box>
   )
 }

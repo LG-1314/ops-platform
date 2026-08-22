@@ -253,8 +253,24 @@ export default function OpsTools() {
           </Stack>
 
           {doloresLog.length > 0 && (
-            <Paper variant="outlined" sx={{ p: 1.5, bgcolor: '#0B0E14', maxHeight: 320, overflow: 'auto' }}>
-              <Typography variant="caption" sx={{ color: '#9AA7C7', fontFamily: 'monospace' }} component="pre" whiteSpace="pre-wrap">
+            <Paper
+              variant="outlined"
+              sx={{
+                p: 1.5,
+                bgcolor: theme.palette.mode === 'dark' ? '#0B0E14' : 'grey.100',
+                maxHeight: 320,
+                overflow: 'auto',
+              }}
+            >
+              <Typography
+                variant="caption"
+                sx={{
+                  color: theme.palette.mode === 'dark' ? '#9AA7C7' : 'text.secondary',
+                  fontFamily: 'monospace',
+                }}
+                component="pre"
+                whiteSpace="pre-wrap"
+              >
                 {doloresLog.join('\n')}
               </Typography>
             </Paper>

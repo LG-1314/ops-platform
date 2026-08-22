@@ -23,10 +23,27 @@ import {
   PieChart as PieChartIcon,
   BarChart as BarIcon,
   Insights,
+  AutoAwesome as IconAi,
+  Close as IconClose,
 } from '@mui/icons-material'
-import { LineChart } from '@mui/x-charts/LineChart'
-import { PieChart } from '@mui/x-charts/PieChart'
-import { BarChart } from '@mui/x-charts/BarChart'
+import {
+  LineChart,
+} from '@mui/x-charts/LineChart'
+import {
+  PieChart,
+} from '@mui/x-charts/PieChart'
+import {
+  BarChart,
+} from '@mui/x-charts/BarChart'
+import {
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Button,
+  CircularProgress,
+  IconButton,
+} from '@mui/material'
 import tokens from '../theme/design-tokens.json'
 import { api } from '../../capabilities/bus'
 import type { DashboardSummary, Alert, Asset, Status } from '@shared/types'
@@ -133,6 +150,26 @@ export default function Dashboard() {
   const [assets, setAssets] = useState<Asset[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  // AI 巡检报告
+  const [reportOpen, setReportOpen] = useState(false)
+  const [report, setReport] = useState('')
+  const [reportLoading, setReportLoading] = useState(false)
+  const [reportError, setReportError] = useState('')
+
+  const genReport = async () => {
+    setReportOpen(true)
+    setReportLoading(true)
+    setReportError('')
+    setReport('')
+    try {
+      const r = await api.ai.report()
+      setReport(r.report)
+    } catch (e) {
+      setReportError((e as Error).message || 'AI 报告生成失败')
+    } finally {
+      setReportLoading(false)
+    }
+  }
 
   useEffect(() => {
     (window as unknown as { __opsDash?: unknown }).__opsDash = { phase: 'loading' }
@@ -296,7 +333,20 @@ export default function Dashboard() {
 
   return (
     <Box>
-      <PageHeader title="态势巡检仪表盘" subtitle="资产可见 · 状态可查 · 风险可预警" />
+      <PageHeader
+        title="态势巡检仪表盘"
+        subtitle="资产可见 · 状态可查 · 风险可预警"
+        actions={
+          <Button
+            variant="outlined"
+            startIcon={reportLoading ? <CircularProgress size={16} color="inherit" /> : <IconAi />}
+            onClick={() => void genReport()}
+            disabled={reportLoading}
+          >
+            {reportLoading ? '生成中…' : 'AI 巡检报告'}
+          </Button>
+        }
+      />
 
       {/* KPI 概览 */}
       <Grid container spacing={2} mb={2}>
@@ -583,6 +633,42 @@ export default function Dashboard() {
           </Card>
         </Grid>
       </Grid>
+
+      {/* AI 巡检报告 */}
+      <Dialog open={reportOpen} onClose={() => setReportOpen(false)} maxWidth="lg" fullWidth>
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <IconAi sx={{ color: theme.palette.primary.main }} />
+          AI 智能巡检报告
+          <Box sx={{ flexGrow: 1 }} />
+          <IconButton size="small" onClick={() => setReportOpen(false)}>
+            <IconClose fontSize="small" />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent>
+          {reportLoading ? (
+            <Box display="flex" flexDirection="column" alignItems="center" gap={1.5} py={6}>
+              <CircularProgress size={28} />
+              <Typography variant="body2" color="text.secondary">AI 正在基于平台数据生成巡检报告…</Typography>
+            </Box>
+          ) : reportError ? (
+            <Box py={3}>
+              <Typography variant="body2" color="error" sx={{ mb: 1 }}>{reportError}</Typography>
+              <Typography variant="caption" color="text.secondary">可在「设置 → AI 大模型」检查配置后重试。</Typography>
+            </Box>
+          ) : (
+            <Typography
+              variant="body2"
+              component="div"
+              sx={{ lineHeight: 1.8, whiteSpace: 'pre-wrap', wordBreak: 'break-word', '& code': { fontFamily: 'monospace', bgcolor: 'action.hover', px: 0.5, borderRadius: 0.5, fontSize: 13 } }}
+            >
+              {report}
+            </Typography>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setReportOpen(false)}>关闭</Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   )
 }

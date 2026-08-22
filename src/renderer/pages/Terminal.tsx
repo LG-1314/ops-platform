@@ -18,6 +18,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { terminalWsUrl, api, USER_TOKEN_KEY } from '../../capabilities/bus'
 import type { Credential } from '@shared/types'
+import PageHeader from '../components/PageHeader'
 
 type ConnState = 'idle' | 'connecting' | 'open' | 'closed' | 'error'
 
@@ -285,31 +286,27 @@ export default function Terminal() {
 
   return (
     <Box>
-      <Stack direction="row" justifyContent="space-between" alignItems="center" mb={2}>
-        <Box>
-          <Typography variant="h5" sx={{ fontWeight: 700 }}>
-            SSH 终端
-          </Typography>
-          <Typography variant="body2" sx={{ color: theme.palette.text.secondary }}>
-            经由能力总线桥接到目标主机 shell（xterm-256color 全功能终端）
-          </Typography>
-        </Box>
-        <Chip
-          size="small"
-          label={
-            connState === 'open'
-              ? '已连接'
-              : connState === 'connecting'
-                ? '连接中…'
-                : connState === 'error'
-                  ? '连接错误'
-                  : connState === 'closed'
-                    ? '已断开'
-                    : '未连接'
-          }
-          sx={{ bgcolor: stateColor + '22', color: stateColor, border: `1px solid ${stateColor}` }}
-        />
-      </Stack>
+      <PageHeader
+        title="SSH 终端"
+        subtitle="经由能力总线桥接到目标主机 shell（xterm-256color 全功能终端）"
+        actions={
+          <Chip
+            size="small"
+            label={
+              connState === 'open'
+                ? '已连接'
+                : connState === 'connecting'
+                  ? '连接中…'
+                  : connState === 'error'
+                    ? '连接错误'
+                    : connState === 'closed'
+                      ? '已断开'
+                      : '未连接'
+            }
+            sx={{ bgcolor: stateColor + '22', color: stateColor, border: `1px solid ${stateColor}` }}
+          />
+        }
+      />
 
       {error && (
         <Alert severity="error" sx={{ mb: 2 }}>

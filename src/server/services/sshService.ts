@@ -151,6 +151,37 @@ function parseMetrics(host: string, uptimeOut: string, freeOut: string, dfOut: s
   return sample
 }
 
+/** 采集目标主机运行中的 systemd 服务列表（含状态）。可选指定服务名或返回全部非系统服务。 */
+export async function collectServices(
+  params: SshConnectParams,
+  filter?: string
+): Promise<{ name: string; status: string; description: string; active: boolean }[]> {
+  const client = await connectSsh(params)
+  try {
+    const cmd = filter
+      ? `systemctl show -p Names,ActiveState,Description --value "${filter}" 2>/dev/null`
+      : `systemctl list-units --type=service --all --no-pager --no-legend 2>/dev/null | head -100`
+    const out = await runCommand(client, cmd, 10000).catch(() => '')
+    const services: { name: string; status: string; description: string; active: boolean }[] = []
+    if (filter) {
+      const lines = out.trim().split('\n')
+      if (lines.length >= 3) {
+        services.push({ name: lines[0] || filter, status: lines[1] || 'unknown', description: lines[2] || '', active: lines[1] === 'active' })
+      }
+    } else {
+      for (const line of out.split('\n')) {
+        const m = line.trim().match(/^(\S+)\s+(\S+)\s+(\S+)\s+(.+)/)
+        if (m) {
+          services.push({ name: m[1], status: `${m[2]}/${m[3]}`, description: m[4].trim(), active: m[2] === 'running' })
+        }
+      }
+    }
+    return services
+  } finally {
+    client.end()
+  }
+}
+
 /** 一次性采集主机指标（CPU/内存/磁盘/负载），结果写入缓存并返回。 */
 export async function collectMetrics(params: SshConnectParams, assetId?: string): Promise<HostMetricSample> {
   const client = await connectSsh(params)

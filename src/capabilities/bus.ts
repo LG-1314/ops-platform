@@ -36,6 +36,7 @@ import type {
   IncidentState,
   ClusterInfo,
   ClusterDetail,
+  ClusterDiagItem,
   GuardrailResult,
   GuardrailRun,
   DoloresResult,
@@ -51,6 +52,8 @@ import type {
   DbHealth,
   CloudAccount,
   CloudResource,
+  CloudChangeLog,
+  ServiceCheck,
   AlertRule,
   CreateCredentialInput,
   NotificationChannel,
@@ -58,6 +61,8 @@ import type {
   UserRole,
   HealthPoint,
   Status,
+  AiAgent,
+  AiProviderDef,
 } from '@shared/types'
 
 class ApiClientError extends Error {
@@ -92,6 +97,14 @@ function buildQuery(query?: Query): string {
   return s ? `?${s}` : ''
 }
 
+// 超时 / 重试策略：默认 30s 中止；仅幂等 GET 在网络类失败时自动重试（最多 2 次，指数退避）
+const REQUEST_TIMEOUT_MS = 30_000
+const GET_RETRY_DELAYS_MS = [500, 1500]
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   // 经 ipc 由主进程转发 Express（绕过 Chromium 网络栈，规避 127.0.0.1 回环被拦截）
   const method = (init?.method || 'GET').toUpperCase()
@@ -104,34 +117,83 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   } catch {
     /* ignore */
   }
-  if (!rpc) {
-    // 降级：纯浏览器开发预览（无 Electron preload），直接 fetch 同源 /api（Vite 代理）
-    const headers: Record<string, string> = { ...(init?.headers as Record<string, string> | undefined) }
-    if (init?.body && !headers['Content-Type']) headers['Content-Type'] = 'application/json'
-    if (userToken) headers[USER_TOKEN_HEADER] = userToken
-    const res = await fetch(`${API_BASE}${path}`, { ...init, headers })
-    let json: ApiResponse<T> & Partial<ApiError>
+  const attempt = (): Promise<T> => {
+    const controller = new AbortController()
+    let timedOut = false
+    const timer = setTimeout(() => {
+      timedOut = true
+      controller.abort()
+    }, REQUEST_TIMEOUT_MS)
+    const doFetch = async (): Promise<T> => {
+      // 降级：纯浏览器开发预览（无 Electron preload），直接 fetch 同源 /api（Vite 代理）
+      const headers: Record<string, string> = { ...(init?.headers as Record<string, string> | undefined) }
+      if (init?.body && !headers['Content-Type']) headers['Content-Type'] = 'application/json'
+      if (userToken) headers[USER_TOKEN_HEADER] = userToken
+      let json: ApiResponse<T> & Partial<ApiError>
+      try {
+        const res = await fetch(`${API_BASE}${path}`, { ...init, headers, signal: controller.signal })
+        try {
+          json = (await res.json()) as ApiResponse<T> & Partial<ApiError>
+        } catch {
+          throw new ApiClientError({ code: res.status, message: `HTTP ${res.status}`, detail: '响应非 JSON' })
+        }
+      } catch (e) {
+        if (e instanceof ApiClientError) throw e
+        if (timedOut) throw new ApiClientError({ code: -1, message: '请求超时，请稍后重试' })
+        throw new ApiClientError({ code: -1, message: '网络异常，请检查连接' })
+      } finally {
+        clearTimeout(timer)
+      }
+      if (json.code !== 0) {
+        if (json.code === 401 && path !== '/auth/login') unauthorizedHandler?.()
+        throw new ApiClientError({ code: json.code, message: json.message, detail: json.detail })
+      }
+      return json.data as T
+    }
+    const doRpc = async (): Promise<T> => {
+      try {
+        const res = (await Promise.race([
+          rpc!(method, path, body, userToken),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('timeout')), REQUEST_TIMEOUT_MS)
+          ),
+        ])) as ApiResponse<T> & Partial<ApiError>
+        if (res.code !== 0) {
+          if (res.code === 401 && path !== '/auth/login') unauthorizedHandler?.()
+          throw new ApiClientError({
+            code: res.code,
+            message: res.message,
+            detail: res.detail,
+          })
+        }
+        return res.data as T
+      } catch (e) {
+        if (e instanceof ApiClientError) throw e
+        if (e instanceof Error && e.message === 'timeout')
+          throw new ApiClientError({ code: -1, message: '请求超时，请稍后重试' })
+        throw new ApiClientError({ code: -1, message: '网络异常，请检查连接' })
+      } finally {
+        clearTimeout(timer)
+      }
+    }
+    return rpc ? doRpc() : doFetch()
+  }
+  const retryable = (e: unknown): boolean =>
+    method === 'GET' && e instanceof ApiClientError && e.code === -1
+  let lastErr: unknown
+  for (let i = 0; i <= GET_RETRY_DELAYS_MS.length; i++) {
     try {
-      json = (await res.json()) as ApiResponse<T> & Partial<ApiError>
-    } catch {
-      throw new ApiClientError({ code: res.status, message: `HTTP ${res.status}`, detail: '响应非 JSON' })
+      return await attempt()
+    } catch (e) {
+      lastErr = e
+      if (i < GET_RETRY_DELAYS_MS.length && retryable(e)) {
+        await sleep(GET_RETRY_DELAYS_MS[i])
+        continue
+      }
+      throw e
     }
-    if (json.code !== 0) {
-      if (json.code === 401 && path !== '/auth/login') unauthorizedHandler?.()
-      throw new ApiClientError({ code: json.code, message: json.message, detail: json.detail })
-    }
-    return json.data as T
   }
-  const res = (await rpc(method, path, body, userToken)) as ApiResponse<T> & Partial<ApiError>
-  if (res.code !== 0) {
-    if (res.code === 401 && path !== '/auth/login') unauthorizedHandler?.()
-    throw new ApiClientError({
-      code: res.code,
-      message: res.message,
-      detail: res.detail,
-    })
-  }
-  return res.data as T
+  throw lastErr
 }
 
 function get<T>(path: string, query?: Query): Promise<T> {
@@ -210,6 +272,8 @@ export const api = {
     create: (a: Partial<Alert>) => post<Alert>('/alerts', a),
     patch: (id: string, state: AlertState) =>
       patch<Alert>(`/alerts/${id}`, { state }),
+    markRead: (id: string) => post<Alert>(`/alerts/${id}/read`),
+    setPinned: (id: string, pinned: boolean) => post<Alert>(`/alerts/${id}/pin`, { pinned }),
     remove: (id: string) => del<{ ok: true }>(`/alerts/${id}`),
   },
   automation: {
@@ -218,6 +282,8 @@ export const api = {
       post<Incident>('/automation/incidents', i),
     patchIncident: (id: string, state: IncidentState) =>
       patch<Incident>(`/automation/incidents/${id}`, { state }),
+    updateIncident: (id: string, i: Partial<Incident>) =>
+      put<Incident>(`/automation/incidents/${id}`, i),
     removeIncident: (id: string) =>
       del<{ ok: true }>(`/automation/incidents/${id}`),
     cicd: () => get<CicdPipeline[]>('/automation/cicd'),
@@ -232,6 +298,7 @@ export const api = {
     list: () => get<ClusterInfo[]>('/clusters'),
     get: (id: string) => get<ClusterDetail>(`/clusters/${id}`),
     scan: (id: string) => post<ClusterDetail>(`/clusters/${id}/scan`),
+    diagnose: (id: string) => post<{ items: ClusterDiagItem[] }>(`/clusters/${id}/diagnose`),
     create: (c: Partial<ClusterInfo>) => post<ClusterInfo>('/clusters', c),
     update: (id: string, c: Partial<ClusterInfo>) => put<ClusterInfo>(`/clusters/${id}`, c),
     remove: (id: string) => del<{ ok: true }>(`/clusters/${id}`),
@@ -268,8 +335,19 @@ export const api = {
   cloud: {
     list: () => get<CloudAccount[]>('/cloud'),
     create: (c: Partial<CloudAccount>) => post<CloudAccount>('/cloud', c),
+    update: (id: string, c: Partial<CloudAccount>) => put<CloudAccount>(`/cloud/${id}`, c),
     resources: (id: string) => get<CloudResource[]>(`/cloud/${id}/resources`),
+    changes: (id: string) => get<CloudChangeLog[]>(`/cloud/${id}/changes`),
+    allChanges: () => get<CloudChangeLog[]>('/cloud/changes/all'),
     remove: (id: string) => del<{ ok: true }>(`/cloud/${id}`),
+  },
+  serviceChecks: {
+    list: () => get<ServiceCheck[]>('/service-checks'),
+    create: (c: Partial<ServiceCheck>) => post<ServiceCheck>('/service-checks', c),
+    update: (id: string, c: Partial<ServiceCheck>) => put<ServiceCheck>(`/service-checks/${id}`, c),
+    remove: (id: string) => del<{ ok: true }>(`/service-checks/${id}`),
+    run: (id: string) => post<ServiceCheck>(`/service-checks/${id}/run`),
+    runAll: () => post<ServiceCheck[]>('/service-checks/run-all'),
   },
   alertRules: {
     list: () => get<AlertRule[]>('/alert-rules'),
@@ -312,6 +390,32 @@ export const api = {
       post<{ ok: boolean; message: string; rule?: FirewallRule }>(`/firewall/${assetId}/rule`, input),
     deleteRule: (assetId: string, raw: string) =>
       del<{ ok: boolean; message: string }>(`/firewall/${assetId}/rule?raw=${encodeURIComponent(raw)}`),
+  },
+  sshServices: {
+    check: (body: { host: string; port?: number; credentialId?: string; name?: string }) =>
+      post<{ name: string; status: string; description: string; active: boolean }[]>('/ssh/services', body),
+  },
+  ai: {
+    config: () => get<{ baseUrl: string; model: string; provider: string; temperature: number; enabled: boolean; hasApiKey: boolean }>('/ai/config'),
+    providers: () => get<AiProviderDef[]>('/ai/providers'),
+    saveConfig: (b: { baseUrl?: string; apiKey?: string; model?: string; enabled?: boolean; provider?: string; temperature?: number }) =>
+      put<{ baseUrl: string; model: string; provider: string; temperature: number; enabled: boolean; hasApiKey: boolean }>('/ai/config', b),
+    test: () => post<{ ok: boolean; message: string }>('/ai/config/test'),
+    chat: (messages: { role: string; content: string }[], context?: { kind: string; payload: Record<string, unknown> }) =>
+      post<{ reply: string }>('/ai/chat', { messages, context }),
+    qa: (question: string, related?: string[]) =>
+      post<{ reply: string }>('/ai/qa', { question, related }),
+    report: () => post<{ report: string }>('/ai/report'),
+    analyzeHost: (assetId: string) =>
+      post<{ reply: string }>('/ai/analyze-host', { assetId }),
+    agents: {
+      list: () => get<AiAgent[]>('/ai/agents'),
+      create: (a: Partial<AiAgent>) => post<AiAgent>('/ai/agents', a),
+      update: (id: string, a: Partial<AiAgent>) => put<AiAgent>(`/ai/agents/${id}`, a),
+      remove: (id: string) => del<{ ok: true }>(`/ai/agents/${id}`),
+      chat: (agentId: string, messages?: { role: string; content: string }[], context?: { kind: string; payload: Record<string, unknown> }) =>
+        post<{ reply: string }>('/ai/agent-chat', { agentId, messages, context }),
+    },
   },
 }
 

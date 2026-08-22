@@ -6,6 +6,7 @@ import type {
   FirewallCollectResult,
   FirewallRule,
   FirewallStatus,
+  FirewallTraffic,
   ListeningPort,
   NetworkConnection,
   AddFirewallRuleInput,
@@ -124,6 +125,33 @@ function parseConnections(ssOut: string): NetworkConnection[] {
   return conns
 }
 
+/** 解析 iptables -L -n -v -x 输出：按链分组返回每条规则的命中计数（pkts/bytes）。 */
+export function parseRuleCounters(
+  verboseOut: string
+): Record<string, { packets: number; bytes: number }[]> {
+  const byChain: Record<string, { packets: number; bytes: number }[]> = {}
+  let currentChain = ''
+  for (const line of verboseOut.split('\n')) {
+    const t = line.trim()
+    if (!t) continue
+    // 链头行：Chain INPUT (policy ACCEPT 0 packets, 0 bytes)
+    const chainM = t.match(/^Chain\s+(\S+)/)
+    if (chainM) {
+      currentChain = chainM[1]
+      byChain[currentChain] = byChain[currentChain] || []
+      continue
+    }
+    if (!currentChain || !byChain[currentChain]) continue
+    // 规则行：pkts bytes target prot opt in out source destination ...
+    // -x 模式下数字为绝对计数，跳过表头行（以 "pkts" 开头）
+    const m = t.match(/^(\d+)\s+(\d+)\s+(\S+)/)
+    if (m && m[1] !== 'pkts') {
+      byChain[currentChain].push({ packets: Number(m[1]), bytes: Number(m[2]) })
+    }
+  }
+  return byChain
+}
+
 /** 一次性采集防火墙状态 + 规则 + 端口 + 连接。 */
 export async function collectFirewall(
   params: SshConnectParams,
@@ -131,8 +159,9 @@ export async function collectFirewall(
 ): Promise<FirewallCollectResult> {
   const client = await connectSsh(params)
   try {
-    const [iptablesOut, ssTlnpOut, ssTanpOut] = await Promise.all([
+    const [iptablesOut, verboseOut, ssTlnpOut, ssTanpOut] = await Promise.all([
       runCommand(client, 'iptables -S 2>/dev/null || echo "__UNAVAILABLE__"', 8000).catch(() => '__UNAVAILABLE__'),
+      runCommand(client, 'iptables -L -n -v -x 2>/dev/null || echo ""', 8000).catch(() => ''),
       runCommand(client, 'ss -tlnp 2>/dev/null | head -100', 8000).catch(() => ''),
       runCommand(client, 'ss -tanp 2>/dev/null | head -300', 8000).catch(() => ''),
     ])
@@ -144,6 +173,35 @@ export async function collectFirewall(
       defaultPolicies: policies,
       ruleCount: rules.length,
     }
+
+    // 流量统计：按链内规则顺序对齐命中计数（-S 与 -L 链顺序一致）
+    let traffic: FirewallTraffic | undefined
+    const counters = parseRuleCounters(verboseOut)
+    const perChainIdx: Record<string, number> = {}
+    for (const rule of rules) {
+      const idx = perChainIdx[rule.chain] || 0
+      const c = (counters[rule.chain] || [])[idx]
+      perChainIdx[rule.chain] = idx + 1
+      if (c) {
+        rule.packets = c.packets
+        rule.bytes = c.bytes
+      }
+    }
+    const counted = rules.filter((r) => r.packets !== undefined)
+    if (counted.length > 0) {
+      const totalPackets = counted.reduce((s, r) => s + (r.packets || 0), 0)
+      const totalBytes = counted.reduce((s, r) => s + (r.bytes || 0), 0)
+      const drops = counted.filter((r) => r.action === 'DROP' || r.action === 'REJECT')
+      traffic = {
+        totalPackets,
+        totalBytes,
+        dropPackets: drops.reduce((s, r) => s + (r.packets || 0), 0),
+        dropBytes: drops.reduce((s, r) => s + (r.bytes || 0), 0),
+        dropHits: drops.filter((r) => (r.packets || 0) > 0).length,
+        collectedAt: new Date().toISOString(),
+      }
+    }
+
     return {
       assetId,
       host: params.host,
@@ -152,6 +210,7 @@ export async function collectFirewall(
       rules,
       ports: parseListeningPorts(ssTlnpOut),
       connections: parseConnections(ssTanpOut),
+      traffic,
     }
   } finally {
     client.end()

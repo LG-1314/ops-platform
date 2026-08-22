@@ -21,6 +21,9 @@ import {
   Alert,
   CircularProgress,
   Tooltip,
+  Grid,
+  FormControlLabel,
+  Switch,
 } from '@mui/material'
 import { useTheme } from '@mui/material/styles'
 import {
@@ -29,10 +32,16 @@ import {
   Cloud as IconCloud,
   Refresh as IconRefresh,
   FolderOpen as IconResources,
+  Edit as IconEdit,
+  Paid as IconPaid,
+  Warning as IconWarning,
+  NewReleases as IconNew,
+  History as IconHistory,
 } from '@mui/icons-material'
 import { api } from '../../capabilities/bus'
 import type {
   CloudAccount,
+  CloudChangeLog,
   CloudProvider,
   CloudResource,
 } from '@shared/types'
@@ -41,15 +50,34 @@ function providerLabel(p: CloudProvider): string {
   return p === 'tencent' ? '腾讯云' : '阿里云'
 }
 
+/** 到期天数（无到期信息返回 null） */
+function daysToExpire(iso?: string): number | null {
+  if (!iso) return null
+  const t = new Date(iso).getTime()
+  if (Number.isNaN(t)) return null
+  return Math.ceil((t - Date.now()) / 86400000)
+}
+
+const CHANGE_LABEL: Record<CloudChangeLog['changeType'], string> = {
+  add: '新增',
+  remove: '下线',
+  change: '变化',
+}
+
 export default function Cloud() {
   const theme = useTheme()
   const [accounts, setAccounts] = useState<CloudAccount[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
   const [resources, setResources] = useState<CloudResource[] | null>(null)
   const [resourcesOpen, setResourcesOpen] = useState(false)
+  const [resourcesLoading, setResourcesLoading] = useState(false)
+  const [resourcesAccount, setResourcesAccount] = useState<CloudAccount | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [changes, setChanges] = useState<CloudChangeLog[]>([])
+  const [onlyExpiring, setOnlyExpiring] = useState(false)
 
   const [form, setForm] = useState<{
     name: string
@@ -78,13 +106,35 @@ export default function Cloud() {
 
   async function onResources(acc: CloudAccount) {
     setError(null)
+    setResourcesAccount(acc)
+    await fetchResources(acc)
+  }
+
+  async function fetchResources(acc: CloudAccount) {
+    setResourcesLoading(true)
+    setError(null)
     try {
       const r = await api.cloud.resources(acc.id)
       setResources(r)
       setResourcesOpen(true)
+      api.cloud.allChanges().then(setChanges).catch(() => {})
     } catch (e) {
       setError((e as Error).message)
+    } finally {
+      setResourcesLoading(false)
     }
+  }
+
+  const openAdd = () => {
+    setEditingId(null)
+    setForm({ name: '', provider: 'tencent', region: 'ap-guangzhou', accessKey: '', secretKey: '' })
+    setOpen(true)
+  }
+
+  const openEdit = (a: CloudAccount) => {
+    setEditingId(a.id)
+    setForm({ name: a.name, provider: a.provider, region: a.region || '', accessKey: '', secretKey: '' })
+    setOpen(true)
   }
 
   async function onDelete(id: string) {
@@ -104,6 +154,21 @@ export default function Cloud() {
     }))
   }
 
+  // 资源弹窗派生统计：即将到期(≤30天)、本月新增、筛选视图
+  const expiringList = (resources || []).filter((r) => {
+    const d = daysToExpire(r.expireAt)
+    return d !== null && d <= 30
+  })
+  const expiringCount = expiringList.length
+  const shownResources = onlyExpiring ? expiringList : resources || []
+  const monthStart = new Date()
+  monthStart.setDate(1)
+  monthStart.setHours(0, 0, 0, 0)
+  const accountChanges = changes.filter((c) => c.accountId === resourcesAccount?.id)
+  const addedThisMonth = accountChanges.filter(
+    (c) => c.changeType === 'add' && new Date(c.at).getTime() >= monthStart.getTime(),
+  ).length
+
   async function onSubmit() {
     setSubmitting(true)
     setError(null)
@@ -120,12 +185,14 @@ export default function Cloud() {
         })
         credentialId = cred.id
       }
-      await api.cloud.create({
+      const payload = {
         name: form.name,
         provider: form.provider,
         region: form.region || undefined,
-        credentialId,
-      })
+        credentialId: credentialId || undefined,
+      }
+      if (editingId) await api.cloud.update(editingId, payload)
+      else await api.cloud.create(payload)
       setOpen(false)
       setForm({ name: '', provider: 'tencent', region: 'ap-guangzhou', accessKey: '', secretKey: '' })
       await load()
@@ -151,7 +218,7 @@ export default function Cloud() {
           <Button startIcon={<IconRefresh />} onClick={() => void load()} color="inherit">
             刷新
           </Button>
-          <Button variant="contained" startIcon={<IconAdd />} onClick={() => setOpen(true)}>
+          <Button variant="contained" startIcon={<IconAdd />} onClick={openAdd}>
             添加账号
           </Button>
         </Stack>
@@ -206,6 +273,11 @@ export default function Cloud() {
                         <IconResources fontSize="small" />
                       </IconButton>
                     </Tooltip>
+                    <Tooltip title="编辑">
+                      <IconButton size="small" onClick={() => openEdit(a)}>
+                        <IconEdit fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
                     <Tooltip title="删除">
                       <IconButton size="small" onClick={() => void onDelete(a.id)}>
                         <IconDelete fontSize="small" />
@@ -219,9 +291,9 @@ export default function Cloud() {
         )}
       </Paper>
 
-      {/* 添加账号 */}
+      {/* 添加 / 编辑账号 */}
       <Dialog open={open} onClose={() => setOpen(false)} maxWidth="xs" fullWidth>
-        <DialogTitle>添加云账号</DialogTitle>
+        <DialogTitle>{editingId ? '编辑云账号' : '添加云账号'}</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
             <TextField
@@ -276,48 +348,183 @@ export default function Cloud() {
 
       {/* 资源列表 */}
       <Dialog open={resourcesOpen} onClose={() => setResourcesOpen(false)} maxWidth="md" fullWidth>
-        <DialogTitle>云资源</DialogTitle>
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          云资源 · {resourcesAccount?.name || ''}
+          <Box sx={{ flexGrow: 1 }} />
+          {resourcesAccount && (
+            <Tooltip title="同步云端资源">
+              <IconButton size="small" disabled={resourcesLoading} onClick={() => void fetchResources(resourcesAccount)}>
+                {resourcesLoading ? <CircularProgress size={18} /> : <IconRefresh fontSize="small" />}
+              </IconButton>
+            </Tooltip>
+          )}
+        </DialogTitle>
         <DialogContent>
           {resources === null ? (
             <Box display="flex" justifyContent="center" py={4}>
               <CircularProgress size={24} />
             </Box>
           ) : (
-            <Paper sx={{ p: 0, overflow: 'hidden', mt: 1 }}>
-              <Table size="small">
-                <TableHead>
-                  <TableRow>
-                    <TableCell>名称</TableCell>
-                    <TableCell>类型</TableCell>
-                    <TableCell>区域</TableCell>
-                    <TableCell>状态</TableCell>
-                    <TableCell>规格</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {resources.length === 0 && (
+            <Box>
+              {/* 账单概览看板 */}
+              <Grid container spacing={1.5} sx={{ mb: 2 }}>
+                <Grid item xs={6} md={3}>
+                  <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 2 }}>
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <IconCloud fontSize="small" color="primary" />
+                      <Box>
+                        <Typography variant="caption" color="text.secondary">实例总数</Typography>
+                        <Typography variant="h6" sx={{ fontWeight: 700 }}>{resources.length}</Typography>
+                      </Box>
+                    </Stack>
+                  </Paper>
+                </Grid>
+                <Grid item xs={6} md={3}>
+                  <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 2 }}>
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <IconPaid fontSize="small" color="success" />
+                      <Box>
+                        <Typography variant="caption" color="text.secondary">月度估算费用</Typography>
+                        <Typography variant="h6" sx={{ fontWeight: 700 }}>
+                          ¥{resources.reduce((s, r) => s + (r.monthlyCost || 0), 0)}
+                        </Typography>
+                      </Box>
+                    </Stack>
+                  </Paper>
+                </Grid>
+                <Grid item xs={6} md={3}>
+                  <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 2 }}>
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <IconWarning fontSize="small" color={expiringCount > 0 ? 'warning' : 'disabled'} />
+                      <Box>
+                        <Typography variant="caption" color="text.secondary">30 天内到期</Typography>
+                        <Typography variant="h6" sx={{ fontWeight: 700, color: expiringCount > 0 ? theme.palette.warning.main : undefined }}>
+                          {expiringCount}
+                        </Typography>
+                      </Box>
+                    </Stack>
+                  </Paper>
+                </Grid>
+                <Grid item xs={6} md={3}>
+                  <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 2 }}>
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <IconNew fontSize="small" color="info" />
+                      <Box>
+                        <Typography variant="caption" color="text.secondary">本月新增</Typography>
+                        <Typography variant="h6" sx={{ fontWeight: 700 }}>{addedThisMonth}</Typography>
+                      </Box>
+                    </Stack>
+                  </Paper>
+                </Grid>
+              </Grid>
+
+              <Stack direction="row" justifyContent="flex-end" sx={{ mb: 1 }}>
+                <FormControlLabel
+                  control={<Switch size="small" checked={onlyExpiring} onChange={(e) => setOnlyExpiring(e.target.checked)} />}
+                  label={<Typography variant="body2">仅看即将到期</Typography>}
+                />
+              </Stack>
+
+              <Paper sx={{ p: 0, overflow: 'hidden', mt: 1 }}>
+                <Table size="small">
+                  <TableHead>
                     <TableRow>
-                      <TableCell colSpan={5} sx={{ color: theme.palette.text.secondary }}>
-                        该账号下暂无实例（或凭据/权限不足）。
-                      </TableCell>
+                      <TableCell>名称</TableCell>
+                      <TableCell>类型</TableCell>
+                      <TableCell>区域</TableCell>
+                      <TableCell>状态</TableCell>
+                      <TableCell>规格</TableCell>
+                      <TableCell>月费估算</TableCell>
+                      <TableCell>到期</TableCell>
                     </TableRow>
-                  )}
-                  {resources.map((r) => (
-                    <TableRow key={r.id}>
-                      <TableCell sx={{ fontWeight: 600 }}>{r.name}</TableCell>
-                      <TableCell>
-                        <Chip size="small" label={r.type} />
-                      </TableCell>
-                      <TableCell sx={{ fontFamily: 'monospace' }}>{r.region}</TableCell>
-                      <TableCell>{r.status}</TableCell>
-                      <TableCell sx={{ fontFamily: 'monospace' }}>
-                        {r.extra?.CPU ? `${r.extra.CPU}核/${r.extra.Memory}GB` : '-'}
-                      </TableCell>
+                  </TableHead>
+                  <TableBody>
+                    {shownResources.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={7} sx={{ color: theme.palette.text.secondary }}>
+                          {onlyExpiring ? '没有 30 天内到期的实例。' : '该账号下暂无实例（或凭据/权限不足）。'}
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {shownResources.map((r) => {
+                      const d = daysToExpire(r.expireAt)
+                      return (
+                        <TableRow key={r.id} hover>
+                          <TableCell sx={{ fontWeight: 600 }}>{r.name}</TableCell>
+                          <TableCell>
+                            <Chip size="small" label={r.type} />
+                          </TableCell>
+                          <TableCell sx={{ fontFamily: 'monospace' }}>{r.region}</TableCell>
+                          <TableCell>{r.status}</TableCell>
+                          <TableCell sx={{ fontFamily: 'monospace' }}>
+                            {r.extra?.CPU ? `${r.extra.CPU}核/${r.extra.Memory}GB` : '-'}
+                          </TableCell>
+                          <TableCell sx={{ fontFamily: 'monospace' }}>
+                            {r.monthlyCost ? `¥${r.monthlyCost}` : '-'}
+                          </TableCell>
+                          <TableCell>
+                            {d === null ? (
+                              <Typography variant="body2" color="text.secondary">按量付费</Typography>
+                            ) : (
+                              <Chip
+                                size="small"
+                                color={d <= 7 ? 'error' : d <= 30 ? 'warning' : 'default'}
+                                variant={d <= 30 ? 'filled' : 'outlined'}
+                                label={d < 0 ? '已到期' : `${d} 天`}
+                              />
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
+              </Paper>
+
+              {/* 变更日志 */}
+              <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 2, mb: 1 }}>
+                <IconHistory fontSize="small" />
+                <Typography variant="subtitle2">资源变更日志</Typography>
+              </Stack>
+              <Paper variant="outlined" sx={{ p: 0, overflow: 'hidden', borderRadius: 2 }}>
+                <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>时间</TableCell>
+                      <TableCell>资源</TableCell>
+                      <TableCell>变更</TableCell>
+                      <TableCell>详情</TableCell>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </Paper>
+                  </TableHead>
+                  <TableBody>
+                    {accountChanges.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={4} sx={{ color: theme.palette.text.secondary }}>
+                          暂无变更记录（首次同步后，实例增删/规格变化会记录在此）。
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {accountChanges.slice(0, 20).map((c) => (
+                      <TableRow key={c.id} hover>
+                        <TableCell sx={{ fontFamily: 'monospace', whiteSpace: 'nowrap' }}>
+                          {new Date(c.at).toLocaleString('zh-CN', { hour12: false })}
+                        </TableCell>
+                        <TableCell sx={{ fontWeight: 600 }}>{c.resourceName}</TableCell>
+                        <TableCell>
+                          <Chip
+                            size="small"
+                            color={c.changeType === 'add' ? 'success' : c.changeType === 'remove' ? 'error' : 'info'}
+                            variant="outlined"
+                            label={CHANGE_LABEL[c.changeType]}
+                          />
+                        </TableCell>
+                        <TableCell>{c.detail}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </Paper>
+            </Box>
           )}
         </DialogContent>
         <DialogActions>

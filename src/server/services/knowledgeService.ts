@@ -43,10 +43,35 @@ function searchToHit(raw: {
 }
 
 export const knowledgeService = {
-  /** 内置 FAQ 检索（复用 knowledge.mjs） */
+  /** 内置 FAQ 检索 + 自维护知识合并检索（让用户录入的知识同样可被检索命中） */
   search(q: string): KnowledgeHit[] {
-    const list = searchKnowledge(q) as unknown as Parameters<typeof searchToHit>[0][]
-    return list.map((f, i) => searchToHit(f, i))
+    const kw = (q || '').trim().toLowerCase()
+    if (!kw) return []
+    const builtin = searchKnowledge(q) as unknown as Parameters<typeof searchToHit>[0][]
+    const builtinHits = builtin.map((f, i) => searchToHit(f, i))
+    // 自维护知识：按标题 / 内容 / 标签模糊匹配（与内置条目一起按相关度参与排序）
+    const userHits = memoryStore
+      .getKnowledge()
+      .filter((k) => {
+        const hay = `${k.title} ${k.content} ${(k.tags || []).join(' ')} ${k.source}`.toLowerCase()
+        // 关键词命中：整词包含即可（英文按空格分词，中文按整串包含）
+        return kw.split(/[\s,，;；]+/).filter(Boolean).some((w) => hay.includes(w))
+      })
+    // 排序：标题命中优先 > 标签命中 > 内容命中，保证最相关条目在前
+    const rank = (k: KnowledgeHit): number => {
+      const t = k.title.toLowerCase()
+      const c = k.content.toLowerCase()
+      const tag = (k.tags || []).join(' ').toLowerCase()
+      const hit = kw.split(/[\s,，;；]+/).filter(Boolean)
+      let score = 0
+      for (const w of hit) {
+        if (t.includes(w)) score += 3
+        if (tag.includes(w)) score += 2
+        if (c.includes(w)) score += 1
+      }
+      return score
+    }
+    return [...userHits.sort((a, b) => rank(b) - rank(a)), ...builtinHits]
   },
 
   /** 自维护 + 内置 FAQ 合并列表（让「知识库」页开箱即丰富，内置条目不可删） */

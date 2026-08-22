@@ -17,6 +17,7 @@ import {
   Storage as IconAssets,
   Notifications as IconAlerts,
   Schedule as IconPatrols,
+  CheckCircle as IconServiceCheck,
   MiscellaneousServices as IconAutomation,
   Dns as IconClusters,
   Settings as IconSettings,
@@ -28,10 +29,13 @@ import {
   MonitorHeart as IconMonitor,
   ManageAccounts as IconUsers,
   Shield as IconFirewall,
+  AutoAwesome as IconAi,
+  Psychology as IconAgents,
   ChevronLeft,
   ChevronRight,
 } from '@mui/icons-material'
 import { NavLink } from 'react-router-dom'
+import { useTheme } from '@mui/material/styles'
 import Logo from './Logo'
 import { useUserRole } from '../state/userRole'
 import type { UserRole } from '@shared/types'
@@ -39,15 +43,32 @@ import type { UserRole } from '@shared/types'
 const DRAWER_WIDTH = 232
 const DRAWER_COLLAPSED = 64
 
-// 导航配色集中管理，强调色对齐全局主题主色（design-tokens.json: primary #3D7BFF），
-// 消除散落硬编码，保证与全局 UI 同源（详见 docs/修复实施记录.md §2.4）。
-const NAV_BG = '#0F1B3D'
-const NAV_FG = '#E5EAF5'
-const NAV_TEXT = '#C7D0E8'
-const NAV_TEXT_MUTED = '#9AA7C7'
-const NAV_ACTIVE_BG = 'rgba(61,123,255,0.18)'
-const NAV_ACTIVE_TEXT = '#FFFFFF'
-const NAV_ACTIVE_ICON = '#3D7BFF'
+/** 侧边栏配色：深色模式用深海军蓝，浅色模式自动切浅色面板，实现主题穿透 */
+function navColors(dark: boolean) {
+  return dark
+    ? {
+        bg: '#0F1B3D',
+        fg: '#E5EAF5',
+        text: '#C7D0E8',
+        textMuted: '#9AA7C7',
+        activeBg: 'rgba(61,123,255,0.18)',
+        activeText: '#FFFFFF',
+        activeIcon: '#3D7BFF',
+        divider: 'rgba(255,255,255,0.08)',
+        hoverBg: 'rgba(255,255,255,0.06)',
+      }
+    : {
+        bg: '#FFFFFF',
+        fg: '#1F2937',
+        text: '#4B5563',
+        textMuted: '#9CA3AF',
+        activeBg: 'rgba(46,107,230,0.12)',
+        activeText: '#1E54C4',
+        activeIcon: '#2E6BE6',
+        divider: 'rgba(15,23,42,0.08)',
+        hoverBg: 'rgba(15,23,42,0.05)',
+      }
+}
 
 interface NavItem {
   to: string
@@ -87,8 +108,11 @@ const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
   {
     title: '主动运维',
     items: [
+      { to: '/ai-assistant', label: 'AI 智能助手', icon: <IconAi /> },
+      { to: '/agents', label: 'AI 智能体', icon: <IconAgents /> },
       { to: '/diagnostics', label: '系统体检', icon: <IconDiagnostics />, roles: ['admin'] },
       { to: '/patrols', label: '智能巡检', icon: <IconPatrols />, roles: ['admin'] },
+      { to: '/service-checks', label: '服务巡检', icon: <IconServiceCheck />, roles: ['admin'] },
       { to: '/automation', label: '自动化', icon: <IconAutomation />, roles: ['admin'] },
       { to: '/ops-tools', label: '运维工具箱', icon: <IconTools />, roles: ['admin'] },
     ],
@@ -116,6 +140,8 @@ interface Props {
 
 export default function Sidebar({ open, onToggle }: Props) {
   const role = useUserRole()
+  const theme = useTheme()
+  const c = navColors(theme.palette.mode === 'dark')
   // 过滤每个分组的可见项（缺省全可见，标注 roles 的按角色过滤），隐藏空分组
   const groups = NAV_GROUPS.map((g) => ({
     ...g,
@@ -131,9 +157,9 @@ export default function Sidebar({ open, onToggle }: Props) {
         '& .MuiDrawer-paper': {
           width: open ? DRAWER_WIDTH : DRAWER_COLLAPSED,
           boxSizing: 'border-box',
-          bgcolor: NAV_BG,
-          color: NAV_FG,
-          borderRight: 'none',
+          bgcolor: c.bg,
+          color: c.fg,
+          borderRight: `1px solid ${c.divider}`,
           transition: 'width 0.2s ease',
           overflowX: 'hidden',
         },
@@ -158,7 +184,7 @@ export default function Sidebar({ open, onToggle }: Props) {
             {gi > 0 && (
               <Divider
                 sx={{
-                  borderColor: 'rgba(255,255,255,0.08)',
+                  borderColor: c.divider,
                   my: 1,
                   ...(open ? {} : { mx: 1 }),
                 }}
@@ -175,13 +201,14 @@ export default function Sidebar({ open, onToggle }: Props) {
                     mb: 0.5,
                     justifyContent: open ? 'flex-start' : 'center',
                     px: open ? 2 : 0,
-                    color: NAV_TEXT,
+                    color: c.text,
                     '&.active': {
-                      bgcolor: NAV_ACTIVE_BG,
-                      color: NAV_ACTIVE_TEXT,
-                      '& .MuiListItemIcon-root': { color: NAV_ACTIVE_ICON },
+                      bgcolor: c.activeBg,
+                      color: c.activeText,
+                      fontWeight: 600,
+                      '& .MuiListItemIcon-root': { color: c.activeIcon },
                     },
-                    '&:hover': { bgcolor: 'rgba(255,255,255,0.06)', color: '#fff' },
+                    '&:hover': { bgcolor: c.hoverBg, color: c.activeText },
                   }}
                 >
                   <ListItemIcon
@@ -200,7 +227,7 @@ export default function Sidebar({ open, onToggle }: Props) {
       <Box sx={{ flexGrow: 0 }} />
       <IconButton
         onClick={onToggle}
-        sx={{ color: NAV_TEXT_MUTED, mx: 'auto', mb: 1 }}
+        sx={{ color: c.textMuted, mx: 'auto', mb: 1 }}
         size="small"
       >
         {open ? <ChevronLeft /> : <ChevronRight />}

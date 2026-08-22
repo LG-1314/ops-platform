@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useSearchParams } from 'react-router-dom'
 import {
   Box,
   Paper,
@@ -34,10 +34,14 @@ import {
   Terminal as IconTerminal,
   Computer as IconHost,
   ShowChart as IconTrend,
+  SmartToy as IconAi,
+  Dns as IconServices,
 } from '@mui/icons-material'
-import { api } from '../../capabilities/bus'
+import { api, ApiClientError } from '../../capabilities/bus'
 import type { Asset, HostMetricSample, Status } from '@shared/types'
 import HostTrendDrawer from '../components/HostTrendDrawer'
+import TerminalDialog from '../components/TerminalDialog'
+import AiDialog from '../components/AiDialog'
 import type { MonitorSummary } from '../../capabilities/bus'
 
 function statusColor(theme: Theme, s: Status): string {
@@ -77,7 +81,6 @@ function MiniBar({ label, pct, theme }: { label: string; pct?: number; theme: Th
 
 export default function Hosts() {
   const theme = useTheme()
-  const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const [hosts, setHosts] = useState<Asset[]>([])
   const [metrics, setMetrics] = useState<MonitorSummary['hosts']>([])
@@ -92,6 +95,15 @@ export default function Hosts() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [confirmDeleteName, setConfirmDeleteName] = useState('')
   const [trendAsset, setTrendAsset] = useState<Asset | null>(null)
+  // 页内终端
+  const [termHost, setTermHost] = useState<Asset | null>(null)
+  // AI 诊断
+  const [aiHost, setAiHost] = useState<Asset | null>(null)
+  // 服务检查
+  const [svcHost, setSvcHost] = useState<Asset | null>(null)
+  const [svcList, setSvcList] = useState<{ name: string; status: string; description: string; active: boolean }[] | null>(null)
+  const [svcLoading, setSvcLoading] = useState(false)
+  const [svcError, setSvcError] = useState('')
 
   // 来自监控大盘「趋势」快捷入口：?trendId=xxx 自动打开趋势抽屉
   useEffect(() => {
@@ -147,7 +159,7 @@ export default function Hosts() {
       setSampleOpen(true)
       await load()
     } catch (e) {
-      setError((e as Error).message || '采集指标失败')
+      setError((e instanceof ApiClientError ? e.detail : null) || (e as Error).message || '采集指标失败')
     } finally {
       setCollectingId('')
     }
@@ -194,13 +206,28 @@ export default function Hosts() {
   }
 
   function goTerminal(host: Asset) {
-    const q = new URLSearchParams({
-      host: host.host,
-      port: String(host.port ?? 22),
-      name: host.name,
-    })
-    if (host.credentialId) q.set('credentialId', host.credentialId)
-    navigate(`/terminal?${q.toString()}`)
+    // 页内弹窗打开终端，不跳转终端页签（保留原页操作状态）
+    setTermHost(host)
+  }
+
+  /** 服务检查：经 SSH 采集目标主机运行中的 systemd 服务 */
+  async function openServices(host: Asset) {
+    if (!host.credentialId) {
+      setError('该主机未配置 SSH 凭据，无法执行服务检查')
+      return
+    }
+    setSvcHost(host)
+    setSvcList(null)
+    setSvcError('')
+    setSvcLoading(true)
+    try {
+      const r = await api.sshServices.check({ host: host.host, port: host.port, credentialId: host.credentialId })
+      setSvcList(r)
+    } catch (e) {
+      setSvcError((e instanceof ApiClientError ? e.detail : null) || (e as Error).message || '服务检查失败')
+    } finally {
+      setSvcLoading(false)
+    }
   }
 
   async function onSubmit() {
@@ -327,15 +354,29 @@ export default function Hosts() {
                       <StatusBadgeInline s={h.reachable ? 'ok' : h.reachable === false ? 'error' : 'unknown'} label={h.reachable ? '在线' : h.reachable === false ? '离线' : '未探测'} theme={theme} />
                     </TableCell>
                     <TableCell align="right">
+                      <Tooltip title="AI 诊断建议">
+                        <IconButton size="small" onClick={() => setAiHost(h)}>
+                          <IconAi fontSize="small" color="primary" />
+                        </IconButton>
+                      </Tooltip>
                       <Tooltip title="趋势">
                         <IconButton size="small" onClick={() => setTrendAsset(h)}>
                           <IconTrend fontSize="small" />
                         </IconButton>
                       </Tooltip>
-                      <Tooltip title="采集指标">
-                        <IconButton size="small" onClick={() => void onCollect(h)} disabled={collectingId === h.id}>
-                          {collectingId === h.id ? <CircularProgress size={16} /> : <IconCollect fontSize="small" />}
-                        </IconButton>
+                      <Tooltip title={h.credentialId ? '采集指标' : '未配置 SSH 凭据'}>
+                        <span>
+                          <IconButton size="small" onClick={() => void onCollect(h)} disabled={collectingId === h.id || !h.credentialId}>
+                            {collectingId === h.id ? <CircularProgress size={16} /> : <IconCollect fontSize="small" />}
+                          </IconButton>
+                        </span>
+                      </Tooltip>
+                      <Tooltip title={h.credentialId ? '服务检查' : '未配置 SSH 凭据'}>
+                        <span>
+                          <IconButton size="small" onClick={() => void openServices(h)} disabled={!h.credentialId}>
+                            <IconServices fontSize="small" />
+                          </IconButton>
+                        </span>
                       </Tooltip>
                       <Tooltip title="终端">
                         <IconButton size="small" onClick={() => goTerminal(h)}>
@@ -493,6 +534,78 @@ export default function Hosts() {
         <DialogActions>
           <Button onClick={() => setConfirmDeleteId(null)}>取消</Button>
           <Button color="error" variant="contained" onClick={() => void confirmDelete()}>删除</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* 页内终端 */}
+      <TerminalDialog
+        open={!!termHost}
+        host={termHost?.host ?? ''}
+        port={termHost?.port ?? 22}
+        credentialId={termHost?.credentialId ?? ''}
+        name={termHost?.name ?? ''}
+        onClose={() => setTermHost(null)}
+      />
+
+      {/* AI 主机诊断 */}
+      <AiDialog
+        open={!!aiHost}
+        title={`AI 诊断：${aiHost?.name ?? ''}`}
+        context={aiHost ? { kind: 'host', payload: { name: aiHost.name, host: aiHost.host, reachable: aiHost.reachable, healthScore: aiHost.healthScore, status: aiHost.status, cpuPct: metricMap.get(aiHost.id)?.cpuPct, memPct: metricMap.get(aiHost.id)?.memPct, diskPct: metricMap.get(aiHost.id)?.diskPct } } : null}
+        onClose={() => setAiHost(null)}
+      />
+
+      {/* 服务检查 */}
+      <Dialog open={!!svcHost} onClose={() => setSvcHost(null)} maxWidth="md" fullWidth>
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <IconServices sx={{ color: theme.palette.primary.main }} />
+          服务检查 · {svcHost?.name}（{svcHost?.host}）
+        </DialogTitle>
+        <DialogContent>
+          {svcLoading ? (
+            <Box display="flex" justifyContent="center" py={6}>
+              <CircularProgress size={28} />
+            </Box>
+          ) : svcError ? (
+            <Alert severity="error">{svcError}</Alert>
+          ) : (
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>服务</TableCell>
+                  <TableCell>状态</TableCell>
+                  <TableCell>描述</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {(svcList ?? []).length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={3} sx={{ color: theme.palette.text.secondary }}>
+                      未采集到服务（目标主机可能非 systemd 环境）。
+                    </TableCell>
+                  </TableRow>
+                )}
+                {(svcList ?? []).map((s, i) => (
+                  <TableRow key={i} hover>
+                    <TableCell sx={{ fontWeight: 600, fontFamily: 'monospace' }}>{s.name}</TableCell>
+                    <TableCell>
+                      <Chip
+                        size="small"
+                        label={s.status}
+                        color={s.active ? 'success' : s.status.includes('failed') ? 'error' : 'default'}
+                        variant="outlined"
+                        sx={{ height: 20, fontSize: 11 }}
+                      />
+                    </TableCell>
+                    <TableCell sx={{ color: theme.palette.text.secondary }}>{s.description}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setSvcHost(null)}>关闭</Button>
         </DialogActions>
       </Dialog>
     </Box>

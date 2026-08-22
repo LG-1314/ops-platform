@@ -30,12 +30,13 @@ import {
   Error as ErrorIcon,
   HelpOutline,
 } from '@mui/icons-material'
-import { useNavigate } from 'react-router-dom'
-import { api, type MonitorSummary } from '../../capabilities/bus'
-import type { HealthPoint } from '@shared/types'
+import { api, type MonitorSummary, ApiClientError } from '../../capabilities/bus'
+import type { HealthPoint, Asset } from '@shared/types'
 import PageHeader from '../components/PageHeader'
 import MetricLineChart, { type TrendPoint } from '../components/MetricLineChart'
 import HealthRing from '../components/HealthRing'
+import HostTrendDrawer from '../components/HostTrendDrawer'
+import TerminalDialog from '../components/TerminalDialog'
 import type { Theme } from '@mui/material'
 
 function Bar({ label, pct, theme }: { label: string; pct?: number; theme: Theme }) {
@@ -61,12 +62,19 @@ function fmtTime(iso: string): string {
   return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
+/** 离线 / 未探测 / 未采集的主机视为"健康分不可用"，展示 '—' 而非 0，避免误导 */
+function hostScoreAvailable(h: MonitorSummary['hosts'][number]): boolean {
+  return h.reachable === true && h.healthScore != null
+}
+
 export default function Monitor() {
   const theme = useTheme()
-  const navigate = useNavigate()
   const [summary, setSummary] = useState<MonitorSummary | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  // 页内抽屉：趋势 / 终端（不再跳转其他页签，看完即关）
+  const [trendAsset, setTrendAsset] = useState<Asset | null>(null)
+  const [termHost, setTermHost] = useState<MonitorSummary['hosts'][number] | null>(null)
 
   const load = () => {
     setLoading(true)
@@ -87,10 +95,12 @@ export default function Monitor() {
     () => summary?.hosts.filter((h) => h.reachable).length ?? 0,
     [summary]
   )
-  const avgHealth = useMemo(
-    () => (summary?.hosts.length ? Math.round(summary.hosts.reduce((a, h) => a + (h.healthScore ?? 0), 0) / summary.hosts.length) : 0),
-    [summary]
-  )
+  // 平均健康分：仅统计"在线且已评分"的主机；全部离线/未探测时显示 '—'
+  const avgHealth = useMemo(() => {
+    const scored = summary?.hosts.filter(hostScoreAvailable) ?? []
+    if (scored.length === 0) return null
+    return Math.round(scored.reduce((a, h) => a + (h.healthScore ?? 0), 0) / scored.length)
+  }, [summary])
 
   // 直接复用 summary.hosts（无需克隆，避免字段增删不同步）；
   // 用模块级空数组常量，避免 `?? []` 每次渲染生成新引用导致 sortedHosts useMemo 失效
@@ -105,6 +115,9 @@ export default function Monitor() {
     }),
     [hostSeries]
   )
+
+  // 页内打开终端：构造资产对象供 TerminalDialog 使用
+  const openTerminal = (h: MonitorSummary['hosts'][number]) => setTermHost(h)
 
   return (
     <Box>
@@ -163,7 +176,9 @@ export default function Monitor() {
                     <IconMonitor sx={{ color: theme.palette.primary.main, fontSize: 20 }} />
                     <Box>
                       <Typography variant="caption" color="text.secondary">平均健康分</Typography>
-                      <Typography variant="h6" sx={{ fontWeight: 700, lineHeight: 1.2 }}>{avgHealth}</Typography>
+                      <Typography variant="h6" sx={{ fontWeight: 700, lineHeight: 1.2, color: avgHealth == null ? theme.palette.text.disabled : theme.palette.success.main }}>
+                        {avgHealth ?? '—'}
+                      </Typography>
                     </Box>
                   </Stack>
                 </CardContent>
@@ -214,7 +229,7 @@ export default function Monitor() {
                             </Typography>
                           </Box>
                         </Stack>
-                        <HealthRing score={h.healthScore ?? 0} size={44} />
+                        <HealthRing score={h.healthScore ?? 0} size={44} unavailable={!hostScoreAvailable(h)} />
                       </Stack>
 
                       {/* 在线状态 + 延迟 + 最后检查 */}
@@ -268,15 +283,14 @@ export default function Monitor() {
 
                       {/* 操作按钮 */}
                       <Stack direction="row" spacing={0.5} justifyContent="flex-end" sx={{ mt: 1, pt: 1, borderTop: `1px solid ${theme.palette.divider}` }}>
-                        <Tooltip title="SSH 终端">
-                          <IconButton size="small" onClick={() => navigate(`/terminal?host=${h.host ?? ''}&port=${h.port ?? 22}&name=${encodeURIComponent(h.name)}${h.credentialId ? `&credentialId=${h.credentialId}` : ''}`)}>
+                        <Tooltip title="SSH 终端（页内打开）">
+                          <IconButton size="small" onClick={() => openTerminal(h)}>
                             <IconTerminal fontSize="small" />
                           </IconButton>
                         </Tooltip>
-                        <Tooltip title="趋势">
+                        <Tooltip title="趋势（页内打开）">
                           <IconButton size="small" onClick={() => {
-                            // 导航到主机页并自动打开趋势抽屉
-                            navigate(`/hosts?trendId=${h.id}`)
+                            setTrendAsset({ id: h.id, name: h.name, host: h.host ?? '', type: 'server', source: 'ssh', tags: [], createdAt: '', healthScore: h.healthScore ?? 0, status: h.status, reachable: h.reachable, latencyMs: h.latencyMs, lastCheckAt: h.lastCheckAt } as Asset)
                           }}>
                             <IconTrend fontSize="small" />
                           </IconButton>
@@ -288,7 +302,7 @@ export default function Monitor() {
                                 await api.ssh.collect({ host: h.host ?? '', port: h.port, credentialId: h.credentialId, assetId: h.id })
                                 load()
                               } catch (e) {
-                                setError((e as Error).message || '采集失败，请检查主机连通性与 SSH 凭据')
+                                setError((e as ApiClientError).detail || (e as Error).message || '采集失败，请检查主机连通性与 SSH 凭据')
                               }
                             }}>
                               <IconCollect fontSize="small" />
@@ -311,6 +325,19 @@ export default function Monitor() {
           <HealthTabs />
         </>
       ) : null}
+
+      {/* 页内趋势抽屉（不再跳转主机页） */}
+      <HostTrendDrawer open={!!trendAsset} asset={trendAsset} onClose={() => setTrendAsset(null)} />
+
+      {/* 页内 SSH 终端（不再跳转终端页签） */}
+      <TerminalDialog
+        open={!!termHost}
+        host={termHost?.host ?? ''}
+        port={termHost?.port ?? 22}
+        credentialId={termHost?.credentialId ?? ''}
+        name={termHost?.name ?? ''}
+        onClose={() => setTermHost(null)}
+      />
     </Box>
   )
 }

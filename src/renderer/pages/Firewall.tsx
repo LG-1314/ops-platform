@@ -36,6 +36,9 @@ import {
   PlayArrow as IconPlay,
   Dns as IconPort,
   Lan as IconConn,
+  Speed as IconTraffic,
+  Block as IconBlock,
+  Download as IconExport,
   Warning,
 } from '@mui/icons-material'
 import { api } from '../../capabilities/bus'
@@ -44,6 +47,7 @@ import type {
   FirewallCollectResult,
   AddFirewallRuleInput,
 } from '@shared/types'
+import { useNavigate } from 'react-router-dom'
 import PageHeader from '../components/PageHeader'
 import EmptyState from '../components/EmptyState'
 
@@ -51,10 +55,11 @@ const CHAINS = ['INPUT', 'OUTPUT', 'FORWARD']
 const PROTOCOLS = ['tcp', 'udp', 'icmp', 'all']
 const ACTIONS = ['ACCEPT', 'DROP', 'REJECT']
 
-type TabKey = 'rules' | 'ports' | 'connections'
+type TabKey = 'rules' | 'ports' | 'connections' | 'traffic'
 
 export default function Firewall() {
   const theme = useTheme()
+  const navigate = useNavigate()
   const [assets, setAssets] = useState<Asset[]>([])
   const [assetId, setAssetId] = useState('')
   const [data, setData] = useState<FirewallCollectResult | null>(null)
@@ -165,6 +170,32 @@ export default function Firewall() {
         ? theme.palette.error.main
         : theme.palette.warning.main
 
+  // 策略导出：把规则集导出为 iptables -S 风格文本（策略备份）
+  const exportPolicy = () => {
+    if (!data) return
+    const lines = data.rules.map((r) => r.raw).join('\n')
+    const blob = new Blob([lines], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `iptables-${data.host}-${new Date().toISOString().slice(0, 10)}.rules`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  // 拦截日志：DROP/REJECT 且有过命中计数的规则
+  const blockLogs = (data?.rules || []).filter(
+    (r) => (r.action === 'DROP' || r.action === 'REJECT') && (r.packets || 0) > 0,
+  )
+
+  const fmtBytes = (n?: number) => {
+    if (n == null) return '—'
+    if (n < 1024) return `${n} B`
+    if (n < 1024 ** 2) return `${(n / 1024).toFixed(1)} KB`
+    if (n < 1024 ** 3) return `${(n / 1024 ** 2).toFixed(1)} MB`
+    return `${(n / 1024 ** 3).toFixed(2)} GB`
+  }
+
   return (
     <Box>
       <PageHeader
@@ -215,8 +246,15 @@ export default function Firewall() {
           <CardContent>
             <EmptyState
               text="没有已关联 SSH 凭据的主机"
-              description="请先在「资产纳管」为主机配置 SSH 凭据，再回到此处采集防火墙与网络数据"
+              description="请先在「主机 / 资产」为主机配置 SSH 凭据，再回到此处采集防火墙与网络数据"
               icon={<IconFirewall />}
+              action={
+                <Stack direction="row" spacing={1} justifyContent="center">
+                  <Button variant="contained" startIcon={<IconAdd />} onClick={() => navigate('/hosts')}>
+                    前往主机配置凭据
+                  </Button>
+                </Stack>
+              }
             />
           </CardContent>
         </Card>
@@ -306,11 +344,15 @@ export default function Firewall() {
             <Tab label={`规则管理（${data.rules.length}）`} value="rules" icon={<IconFirewall fontSize="small" />} iconPosition="start" />
             <Tab label={`监听端口（${data.ports.length}）`} value="ports" icon={<IconPort fontSize="small" />} iconPosition="start" />
             <Tab label={`网络连接（${data.connections.length}）`} value="connections" icon={<IconConn fontSize="small" />} iconPosition="start" />
+            <Tab label="流量统计" value="traffic" icon={<IconTraffic fontSize="small" />} iconPosition="start" />
           </Tabs>
 
           {tab === 'rules' && (
             <>
               <Stack direction="row" justifyContent="flex-end" mb={1}>
+                <Button variant="outlined" startIcon={<IconExport />} onClick={exportPolicy} sx={{ mr: 1 }}>
+                  导出策略备份
+                </Button>
                 <Button variant="contained" startIcon={<IconAdd />} onClick={() => setOpen(true)}>
                   添加规则
                 </Button>
@@ -331,6 +373,7 @@ export default function Firewall() {
                         <TableCell>端口</TableCell>
                         <TableCell>入接口</TableCell>
                         <TableCell>动作</TableCell>
+                        <TableCell>命中</TableCell>
                         <TableCell>注释</TableCell>
                         <TableCell align="right">操作</TableCell>
                       </TableRow>
@@ -348,6 +391,9 @@ export default function Firewall() {
                           <TableCell>{r.inInterface || (r.outInterface || '')}</TableCell>
                           <TableCell>
                             <Chip size="small" label={r.action} sx={{ height: 20, fontSize: 11, color: actionColor(r.action), borderColor: actionColor(r.action), bgcolor: actionColor(r.action) + '22' }} variant="outlined" />
+                          </TableCell>
+                          <TableCell sx={{ fontFamily: 'monospace', fontSize: 12 }}>
+                            {r.packets != null ? `${r.packets} / ${fmtBytes(r.bytes)}` : '—'}
                           </TableCell>
                           <TableCell sx={{ maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.comment || '—'}</TableCell>
                           <TableCell align="right">
@@ -457,6 +503,123 @@ export default function Firewall() {
                   </Table>
                 )}
               </Paper>
+            </>
+          )}
+          {tab === 'traffic' && (
+            <>
+              {!data.traffic ? (
+                <Box py={4}>
+                  <EmptyState
+                    text="暂无流量计数"
+                    description="iptables 未返回规则命中计数（可能需要 root 权限执行 iptables -L -v -x）"
+                    icon={<IconTraffic />}
+                  />
+                </Box>
+              ) : (
+                <>
+                  <Grid container spacing={2} mb={2}>
+                    <Grid item xs={6} sm={3}>
+                      <Card>
+                        <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
+                          <Stack direction="row" spacing={1} alignItems="center">
+                            <IconTraffic sx={{ color: theme.palette.primary.main, fontSize: 20 }} />
+                            <Box>
+                              <Typography variant="caption" color="text.secondary">规则命中包数</Typography>
+                              <Typography variant="h6" sx={{ fontWeight: 700, lineHeight: 1.2 }}>{data.traffic.totalPackets}</Typography>
+                            </Box>
+                          </Stack>
+                        </CardContent>
+                      </Card>
+                    </Grid>
+                    <Grid item xs={6} sm={3}>
+                      <Card>
+                        <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
+                          <Stack direction="row" spacing={1} alignItems="center">
+                            <IconTraffic sx={{ color: theme.palette.info.main, fontSize: 20 }} />
+                            <Box>
+                              <Typography variant="caption" color="text.secondary">命中流量</Typography>
+                              <Typography variant="h6" sx={{ fontWeight: 700, lineHeight: 1.2 }}>{fmtBytes(data.traffic.totalBytes)}</Typography>
+                            </Box>
+                          </Stack>
+                        </CardContent>
+                      </Card>
+                    </Grid>
+                    <Grid item xs={6} sm={3}>
+                      <Card>
+                        <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
+                          <Stack direction="row" spacing={1} alignItems="center">
+                            <IconBlock sx={{ color: data.traffic.dropPackets > 0 ? theme.palette.error.main : theme.palette.text.disabled, fontSize: 20 }} />
+                            <Box>
+                              <Typography variant="caption" color="text.secondary">拦截包数（DROP/REJECT）</Typography>
+                              <Typography variant="h6" sx={{ fontWeight: 700, lineHeight: 1.2, color: data.traffic.dropPackets > 0 ? theme.palette.error.main : undefined }}>
+                                {data.traffic.dropPackets}
+                              </Typography>
+                            </Box>
+                          </Stack>
+                        </CardContent>
+                      </Card>
+                    </Grid>
+                    <Grid item xs={6} sm={3}>
+                      <Card>
+                        <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
+                          <Stack direction="row" spacing={1} alignItems="center">
+                            <IconBlock sx={{ color: data.traffic.dropHits > 0 ? theme.palette.warning.main : theme.palette.text.disabled, fontSize: 20 }} />
+                            <Box>
+                              <Typography variant="caption" color="text.secondary">拦截命中规则数</Typography>
+                              <Typography variant="h6" sx={{ fontWeight: 700, lineHeight: 1.2 }}>{data.traffic.dropHits}</Typography>
+                            </Box>
+                          </Stack>
+                        </CardContent>
+                      </Card>
+                    </Grid>
+                  </Grid>
+
+                  <Typography variant="subtitle2" gutterBottom>
+                    异常拦截日志（DROP / REJECT 命中）
+                  </Typography>
+                  <Paper sx={{ p: 0, overflow: 'auto' }}>
+                    {blockLogs.length === 0 ? (
+                      <Box py={4}>
+                        <EmptyState text="暂无拦截命中" description="DROP / REJECT 规则均未产生拦截计数" icon={<IconBlock />} />
+                      </Box>
+                    ) : (
+                      <Table size="small">
+                        <TableHead>
+                          <TableRow>
+                            <TableCell>链</TableCell>
+                            <TableCell>动作</TableCell>
+                            <TableCell>源地址</TableCell>
+                            <TableCell>目的地址</TableCell>
+                            <TableCell>端口</TableCell>
+                            <TableCell>拦截包数</TableCell>
+                            <TableCell>拦截流量</TableCell>
+                            <TableCell>注释</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {blockLogs.map((r, i) => (
+                            <TableRow key={i} hover>
+                              <TableCell sx={{ fontWeight: 600 }}>{r.chain}</TableCell>
+                              <TableCell>
+                                <Chip size="small" label={r.action} sx={{ height: 20, fontSize: 11, color: actionColor(r.action), borderColor: actionColor(r.action), bgcolor: actionColor(r.action) + '22' }} variant="outlined" />
+                              </TableCell>
+                              <TableCell sx={{ fontFamily: 'monospace', fontSize: 12 }}>{r.source || '*'}</TableCell>
+                              <TableCell sx={{ fontFamily: 'monospace', fontSize: 12 }}>{r.destination || '*'}</TableCell>
+                              <TableCell sx={{ fontFamily: 'monospace', fontSize: 12 }}>{r.port || (r.sport ? `sport:${r.sport}` : '*')}</TableCell>
+                              <TableCell sx={{ fontFamily: 'monospace', fontWeight: 700 }}>{r.packets}</TableCell>
+                              <TableCell sx={{ fontFamily: 'monospace' }}>{fmtBytes(r.bytes)}</TableCell>
+                              <TableCell sx={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.comment || '—'}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    )}
+                  </Paper>
+                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+                    计数来自 iptables -L -v -x，为内核累计值；数据采集时间 {new Date(data.traffic.collectedAt).toLocaleString('zh-CN', { hour12: false })}
+                  </Typography>
+                </>
+              )}
             </>
           )}
         </>

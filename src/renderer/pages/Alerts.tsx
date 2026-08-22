@@ -23,8 +23,11 @@ import {
   DialogActions,
   Switch,
   Snackbar,
+  Tooltip,
+  Typography,
 } from '@mui/material'
-import { Add as IconAdd, Delete as IconDelete, PlayArrow as IconEval, Refresh as IconRefresh } from '@mui/icons-material'
+import { useTheme } from '@mui/material/styles'
+import { Add as IconAdd, Delete as IconDelete, PlayArrow as IconEval, Refresh as IconRefresh, SmartToy as IconAi, PushPin as IconPin, MarkEmailRead as IconRead } from '@mui/icons-material'
 import { api } from '../../capabilities/bus'
 import type {
   Alert,
@@ -39,12 +42,41 @@ import type {
 import DataTable, { Column } from '../components/DataTable'
 import StatusBadge from '../components/StatusBadge'
 import PageHeader from '../components/PageHeader'
+import AiDialog from '../components/AiDialog'
 
-function levelStatus(l: string): Status {
-  if (l === 'P0' || l === 'P1') return 'error'
-  if (l === 'P2') return 'warn'
-  return 'unknown'
+/** 严重度中文映射：P0 紧急(红) / P1 严重(橙) / P2 一般(黄) / P3 轻微(绿)，配色与 STATUS_COLOR 状态色系保持一致 */
+const LEVEL_META: Record<AlertLevel, { label: string; color: string }> = {
+  P0: { label: '紧急', color: '#F87171' }, // = STATUS_COLOR.error
+  P1: { label: '严重', color: '#F59E0B' }, // = STATUS_COLOR.warn（橙）
+  P2: { label: '一般', color: '#FACC15' }, // 黄
+  P3: { label: '轻微', color: '#34D399' }, // = STATUS_COLOR.ok
 }
+
+function LevelChip({ level }: { level: AlertLevel }) {
+  const meta = LEVEL_META[level]
+  return (
+    <Chip
+      size="small"
+      label={`${level} ${meta.label}`}
+      sx={{ bgcolor: `${meta.color}1A`, color: meta.color, fontWeight: 600, border: `1px solid ${meta.color}33`, height: 24 }}
+    />
+  )
+}
+
+/** 「当前 89% / 阈值 80%」形式的指标展示（缺阈值时仅展示当前值） */
+function thresholdText(r: Alert): string | null {
+  if (r.currentValue == null) return null
+  const u = r.unit ?? ''
+  return r.threshold != null ? `当前 ${r.currentValue}${u} / 阈值 ${r.threshold}${u}` : `当前 ${r.currentValue}${u}`
+}
+
+const STATE_LABEL: Record<AlertState, string> = {
+  active: '未处理',
+  ack: '已确认',
+  silenced: '已静默',
+  resolved: '已解决',
+}
+
 function stateStatus(s: string): Status {
   if (s === 'active') return 'warn'
   if (s === 'resolved') return 'ok'
@@ -65,6 +97,7 @@ const METRICS: { v: AlertMetric; label: string }[] = [
 const OPS: AlertOperator[] = ['>', '>=', '<', '<=', '==', '!=']
 
 export default function Alerts() {
+  const theme = useTheme()
   const [tab, setTab] = useState(0)
   const [alerts, setAlerts] = useState<Alert[]>([])
   const [rules, setRules] = useState<AlertRule[]>([])
@@ -76,6 +109,10 @@ export default function Alerts() {
   const [error, setError] = useState('')
   const [actingId, setActingId] = useState('')
   const [snack, setSnack] = useState('')
+  // AI 分析弹窗
+  const [aiCtx, setAiCtx] = useState<{ title: string; payload: Record<string, unknown> } | null>(null)
+  // 告警详情弹窗
+  const [detail, setDetail] = useState<Alert | null>(null)
 
   // 规则表单
   const [open, setOpen] = useState(false)
@@ -202,17 +239,111 @@ export default function Alerts() {
     }
   }
 
+  // 告警归属资产名（从规则表单加载的资产列表反查）
+  const assetNameOf = (id?: string): string | undefined => assets.find((a) => a.id === id)?.name
+
+  // 打开详情：自动标记已读
+  const openDetail = (r: Alert) => {
+    setDetail(r)
+    if (!r.readAt) {
+      api.alerts.markRead(r.id).then((a) => {
+        setAlerts((prev) => prev.map((x) => (x.id === a.id ? a : x)))
+      }).catch(() => {})
+    }
+  }
+
+  // 置顶切换
+  const togglePin = async (r: Alert) => {
+    setError('')
+    try {
+      const a = await api.alerts.setPinned(r.id, !r.pinned)
+      setAlerts((prev) => prev.map((x) => (x.id === a.id ? a : x)))
+    } catch (e) {
+      setError((e as Error).message || '置顶失败')
+    }
+  }
+
+  // 标记已读（未读告警专属操作）
+  const markRead = async (id: string) => {
+    setError('')
+    try {
+      const a = await api.alerts.markRead(id)
+      setAlerts((prev) => prev.map((x) => (x.id === a.id ? a : x)))
+    } catch (e) {
+      setError((e as Error).message || '操作失败')
+    }
+  }
+
   const cols: Column<Alert>[] = [
-    { key: 'level', label: '级别', render: (r) => <StatusBadge status={levelStatus(r.level)} label={r.level} /> },
-    { key: 'title', label: '标题' },
-    { key: 'assetId', label: '资产', render: (r) => r.assetId ?? '—' },
-    { key: 'state', label: '状态', render: (r) => <StatusBadge status={stateStatus(r.state)} label={r.state} /> },
+    { key: 'level', label: '级别', render: (r) => <LevelChip level={r.level} /> },
+    {
+      key: 'title',
+      label: '标题',
+      render: (r) => (
+        <Box onClick={() => openDetail(r)} sx={{ cursor: 'pointer', opacity: r.readAt ? 0.7 : 1, display: 'flex', alignItems: 'center', gap: 0.5 }}>
+          {!r.readAt && <Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: theme.palette.primary.main, flexShrink: 0 }} />}
+          <Typography variant="body2" sx={{ fontWeight: r.readAt ? 400 : 700 }}>{r.title}</Typography>
+          {r.pinned && <IconPin fontSize="small" sx={{ color: theme.palette.warning.main, fontSize: 14 }} />}
+          {thresholdText(r) && (
+            <Typography variant="caption" component="div" sx={{ color: 'text.secondary', fontFamily: 'monospace', fontSize: 12, mt: 0.25 }}>
+              {thresholdText(r)}
+            </Typography>
+          )}
+          {r.message && (
+            <Typography
+              variant="caption"
+              component="div"
+              sx={{
+                color: r.level === 'P0' || r.level === 'P1' ? 'error.main' : 'warning.main',
+                fontFamily: 'monospace',
+                fontSize: 12,
+                mt: 0.25,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                maxWidth: 320,
+              }}
+            >
+              {r.message}
+            </Typography>
+          )}
+        </Box>
+      ),
+    },
+    { key: 'assetId', label: '资产', render: (r) => assetNameOf(r.assetId) ?? r.assetId ?? '—' },
+    {
+      key: 'state',
+      label: '状态',
+      render: (r) => (
+        <Stack direction="row" spacing={0.5} alignItems="center">
+          <StatusBadge status={stateStatus(r.state)} label={STATE_LABEL[r.state]} />
+          {!r.readAt && <Chip size="small" label="未读" color="primary" variant="outlined" sx={{ height: 18, fontSize: 10 }} />}
+        </Stack>
+      ),
+    },
     { key: 'createdAt', label: '时间', render: (r) => new Date(r.createdAt).toLocaleString() },
     {
       key: '__actions',
       label: '操作',
       render: (r) => (
-        <Stack direction="row" spacing={1}>
+        <Stack direction="row" spacing={0.5} alignItems="center">
+          <Tooltip title={r.pinned ? '取消置顶' : '置顶'}>
+            <IconButton size="small" onClick={() => togglePin(r)}>
+              <IconPin fontSize="small" sx={{ color: r.pinned ? theme.palette.warning.main : undefined }} />
+            </IconButton>
+          </Tooltip>
+          {!r.readAt && (
+            <Tooltip title="标记已读">
+              <IconButton size="small" onClick={() => markRead(r.id)}>
+                <IconRead fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          )}
+          <Tooltip title="AI 智能分析该告警">
+            <IconButton size="small" onClick={() => setAiCtx({ title: `AI 分析：${r.title}`, payload: { level: r.level, title: r.title, message: r.message, assetId: r.assetId, assetName: assetNameOf(r.assetId) } })}>
+              <IconAi fontSize="small" sx={{ color: theme.palette.primary.main }} />
+            </IconButton>
+          </Tooltip>
           {r.state === 'active' && (
             <Button size="small" variant="outlined" onClick={() => act(r.id, 'ack')} disabled={actingId === r.id}>
               确认
@@ -232,6 +363,15 @@ export default function Alerts() {
       ),
     },
   ]
+
+  // 排序：置顶优先 → 未读优先 → 时间倒序
+  const sortedAlerts = [...alerts].sort((a, b) => {
+    if (a.pinned && !b.pinned) return -1
+    if (!a.pinned && b.pinned) return 1
+    if (!a.readAt && b.readAt) return -1
+    if (a.readAt && !b.readAt) return 1
+    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  })
 
   const metricLabel = (m: AlertMetric) => METRICS.find((x) => x.v === m)?.label ?? m
 
@@ -269,9 +409,9 @@ export default function Alerts() {
         <Stack direction="row" spacing={1} mb={2}>
           <TextField select size="small" label="级别" value={level} onChange={(e) => setLevel(e.target.value)} sx={{ minWidth: 120 }}>
             <MenuItem value="">全部</MenuItem>
-            {['P0', 'P1', 'P2', 'P3'].map((l) => (
+            {(['P0', 'P1', 'P2', 'P3'] as AlertLevel[]).map((l) => (
               <MenuItem key={l} value={l}>
-                {l}
+                {l} {LEVEL_META[l].label}
               </MenuItem>
             ))}
           </TextField>
@@ -295,7 +435,7 @@ export default function Alerts() {
             <CircularProgress />
           </Box>
         ) : (
-          <DataTable columns={cols} rows={alerts} emptyText="暂无告警" />
+          <DataTable columns={cols} rows={sortedAlerts} emptyText="暂无告警" />
         )
       ) : ruleLoading ? (
         <Box display="flex" justifyContent="center" py={6}>
@@ -423,6 +563,78 @@ export default function Alerts() {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* 告警详情弹窗 */}
+      <Dialog open={!!detail} onClose={() => setDetail(null)} maxWidth="sm" fullWidth>
+        <DialogTitle>{detail ? `告警详情：${detail.title}` : ''}</DialogTitle>
+        <DialogContent>
+          {detail && (
+            <Stack spacing={2} sx={{ mt: 1 }}>
+              <Stack direction="row" spacing={1} alignItems="center">
+                <LevelChip level={detail.level} />
+                <StatusBadge status={stateStatus(detail.state)} label={STATE_LABEL[detail.state]} />
+              </Stack>
+              <Box>
+                <Typography variant="caption" color="text.secondary">描述</Typography>
+                <Typography variant="body2">{detail.message || '—'}</Typography>
+              </Box>
+              <Box>
+                <Typography variant="caption" color="text.secondary">指标</Typography>
+                <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+                  {thresholdText(detail) ?? '（非阈值类告警）'}
+                </Typography>
+              </Box>
+              <Box>
+                <Typography variant="caption" color="text.secondary">关联资源</Typography>
+                <Typography variant="body2">{assetNameOf(detail.assetId) ?? detail.assetId ?? '—'}</Typography>
+              </Box>
+              <Box>
+                <Typography variant="caption" color="text.secondary">时间</Typography>
+                <Typography variant="body2">
+                  创建：{new Date(detail.createdAt).toLocaleString()}
+                  {detail.updatedAt && ` · 变更：${new Date(detail.updatedAt).toLocaleString()}`}
+                  {detail.resolvedAt && ` · 解决：${new Date(detail.resolvedAt).toLocaleString()}`}
+                </Typography>
+              </Box>
+              <Box>
+                <Typography variant="caption" color="text.secondary">同资源 / 同类型历史告警</Typography>
+                {alerts.filter((a) => a.id !== detail.id && (a.assetId === detail.assetId || a.title === detail.title)).length === 0 ? (
+                  <Typography variant="body2" color="text.secondary">暂无</Typography>
+                ) : (
+                  <Stack spacing={0.5}>
+                    {alerts
+                      .filter((a) => a.id !== detail.id && (a.assetId === detail.assetId || a.title === detail.title))
+                      .slice(0, 10)
+                      .map((a) => (
+                        <Stack key={a.id} direction="row" spacing={1} alignItems="center" sx={{ fontSize: 12 }}>
+                          <LevelChip level={a.level} />
+                          <Typography variant="caption" sx={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {a.title}
+                          </Typography>
+                          <StatusBadge status={stateStatus(a.state)} label={STATE_LABEL[a.state]} />
+                          <Typography variant="caption" color="text.secondary">
+                            {new Date(a.createdAt).toLocaleString()}
+                          </Typography>
+                        </Stack>
+                      ))}
+                  </Stack>
+                )}
+              </Box>
+            </Stack>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDetail(null)}>关闭</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* AI 智能分析弹窗 */}
+      <AiDialog
+        open={!!aiCtx}
+        title={aiCtx?.title ?? ''}
+        context={aiCtx ? { kind: 'alert', payload: aiCtx.payload } : null}
+        onClose={() => setAiCtx(null)}
+      />
 
       <Snackbar open={!!snack} autoHideDuration={3000} onClose={() => setSnack('')} anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}>
         <MuiAlert severity="info" onClose={() => setSnack('')}>

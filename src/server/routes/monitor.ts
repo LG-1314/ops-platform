@@ -1,10 +1,14 @@
 import { Router } from 'express'
+import { requireUser } from '../services/authService'
 import { asyncHandler, ok } from '../utils/response'
 import { healthStore } from '../store/healthHistoryStore'
 import { memoryStore } from '../store/memoryStore'
 import { getLatest } from '../services/hostMetricsCache'
 
 export const monitorRouter = Router()
+
+// 用户级鉴权：所有路由需携带有效会话 token（与 users/cloud/ai 等路由一致）
+monitorRouter.use(requireUser)
 
 // DB/K8s 健康时序查询
 // GET /api/monitor/health-history?kind=db&assetId=xxx&from=&to=

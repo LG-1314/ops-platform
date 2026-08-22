@@ -27,6 +27,7 @@ import {
   Delete as IconDelete,
   Flag as IconFlow,
   PlayArrow as IconRun,
+  EditOutlined,
 } from '@mui/icons-material'
 import { api } from '../../capabilities/bus'
 import type {
@@ -77,7 +78,7 @@ const emptyIncident = () => ({
 
 const emptyPipeline = () => ({
   name: '',
-  stage: 'build' as (typeof CICD_STAGES)[number],
+  stage: 'build' as string,
   status: 'pending' as CicdPipeline['status'],
 })
 
@@ -92,11 +93,13 @@ export default function Automation() {
   const [incOpen, setIncOpen] = useState(false)
   const [incForm, setIncForm] = useState(emptyIncident())
   const [incSaving, setIncSaving] = useState(false)
+  const [incEditId, setIncEditId] = useState<string | null>(null)
 
   // 流水线表单
   const [pipeOpen, setPipeOpen] = useState(false)
   const [pipeForm, setPipeForm] = useState(emptyPipeline())
   const [pipeSaving, setPipeSaving] = useState(false)
+  const [pipeEditId, setPipeEditId] = useState<string | null>(null)
   const [runningId, setRunningId] = useState('')
 
   const load = () => {
@@ -112,25 +115,6 @@ export default function Automation() {
   }
 
   useEffect(load, [])
-
-  const createIncident = async () => {
-    setIncSaving(true)
-    setError('')
-    try {
-      await api.automation.createIncident({
-        title: incForm.title,
-        level: incForm.level,
-        assignee: incForm.assignee || undefined,
-      })
-      setIncOpen(false)
-      setIncForm(emptyIncident())
-      load()
-    } catch (e) {
-      setError((e as Error).message || '创建失败')
-    } finally {
-      setIncSaving(false)
-    }
-  }
 
   const flowIncident = async (inc: Incident) => {
     const idx = STATE_FLOW.indexOf(inc.state)
@@ -154,20 +138,59 @@ export default function Automation() {
     }
   }
 
+  const openAddIncident = () => {
+    setIncEditId(null)
+    setIncForm(emptyIncident())
+    setIncOpen(true)
+  }
+
+  const openEditIncident = (inc: Incident) => {
+    setIncEditId(inc.id)
+    setIncForm({ title: inc.title, level: inc.level, assignee: inc.assignee || '' })
+    setIncOpen(true)
+  }
+
+  const createIncident = async () => {
+    setIncSaving(true)
+    setError('')
+    try {
+      const payload = { title: incForm.title, level: incForm.level, assignee: incForm.assignee || undefined }
+      if (incEditId) await api.automation.updateIncident(incEditId, payload)
+      else await api.automation.createIncident(payload)
+      setIncOpen(false)
+      setIncForm(emptyIncident())
+      load()
+    } catch (e) {
+      setError((e as Error).message || '保存失败')
+    } finally {
+      setIncSaving(false)
+    }
+  }
+
+  const openAddPipeline = () => {
+    setPipeEditId(null)
+    setPipeForm(emptyPipeline())
+    setPipeOpen(true)
+  }
+
+  const openEditPipeline = (p: CicdPipeline) => {
+    setPipeEditId(p.id)
+    setPipeForm({ name: p.name, stage: p.stage, status: p.status })
+    setPipeOpen(true)
+  }
+
   const createPipeline = async () => {
     setPipeSaving(true)
     setError('')
     try {
-      await api.automation.createPipeline({
-        name: pipeForm.name,
-        stage: pipeForm.stage,
-        status: pipeForm.status,
-      })
+      const payload = { name: pipeForm.name, stage: pipeForm.stage, status: pipeForm.status }
+      if (pipeEditId) await api.automation.patchPipeline(pipeEditId, payload)
+      else await api.automation.createPipeline(payload)
       setPipeOpen(false)
       setPipeForm(emptyPipeline())
       load()
     } catch (e) {
-      setError((e as Error).message || '创建失败')
+      setError((e as Error).message || '保存失败')
     } finally {
       setPipeSaving(false)
     }
@@ -220,14 +243,14 @@ export default function Automation() {
             <Button
               variant="outlined"
               startIcon={<AccountTree />}
-              onClick={() => { setPipeForm(emptyPipeline()); setPipeOpen(true) }}
+              onClick={openAddPipeline}
             >
               添加流水线
             </Button>
             <Button
               variant="contained"
               startIcon={<IconAdd />}
-              onClick={() => { setIncForm(emptyIncident()); setIncOpen(true) }}
+              onClick={openAddIncident}
             >
               新建事故
             </Button>
@@ -285,6 +308,11 @@ export default function Automation() {
                             </Button>
                           </Tooltip>
                         )}
+                        <Tooltip title="编辑事故">
+                          <IconButton size="small" onClick={() => openEditIncident(inc)}>
+                            <EditOutlined fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
                         <Tooltip title="删除事故">
                           <IconButton size="small" color="error" onClick={() => removeIncident(inc.id)}>
                             <IconDelete fontSize="small" />
@@ -339,6 +367,11 @@ export default function Automation() {
                             {runningId === p.id ? <CircularProgress size={16} /> : <IconRun fontSize="small" />}
                           </IconButton>
                         </Tooltip>
+                        <Tooltip title="编辑流水线">
+                          <IconButton size="small" onClick={() => openEditPipeline(p)}>
+                            <EditOutlined fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
                         <Tooltip title="删除流水线">
                           <IconButton size="small" color="error" onClick={() => removePipeline(p.id)}>
                             <IconDelete fontSize="small" />
@@ -354,9 +387,9 @@ export default function Automation() {
         </Grid>
       </Grid>
 
-      {/* 新建事故 */}
+      {/* 新建 / 编辑事故 */}
       <Dialog open={incOpen} onClose={() => setIncOpen(false)} maxWidth="xs" fullWidth>
-        <DialogTitle>新建事故</DialogTitle>
+        <DialogTitle>{incEditId ? '编辑事故' : '新建事故'}</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
             <TextField
@@ -388,14 +421,14 @@ export default function Automation() {
         <DialogActions>
           <Button onClick={() => setIncOpen(false)}>取消</Button>
           <Button variant="contained" disabled={incSaving || !incForm.title.trim()} onClick={createIncident}>
-            {incSaving ? '创建中…' : '创建'}
+            {incSaving ? '保存中…' : incEditId ? '保存' : '创建'}
           </Button>
         </DialogActions>
       </Dialog>
 
-      {/* 添加流水线 */}
+      {/* 添加 / 编辑流水线 */}
       <Dialog open={pipeOpen} onClose={() => setPipeOpen(false)} maxWidth="xs" fullWidth>
-        <DialogTitle>添加流水线</DialogTitle>
+        <DialogTitle>{pipeEditId ? '编辑流水线' : '添加流水线'}</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
             <TextField
@@ -433,7 +466,7 @@ export default function Automation() {
         <DialogActions>
           <Button onClick={() => setPipeOpen(false)}>取消</Button>
           <Button variant="contained" disabled={pipeSaving || !pipeForm.name.trim()} onClick={createPipeline}>
-            {pipeSaving ? '创建中…' : '创建'}
+            {pipeSaving ? '保存中…' : pipeEditId ? '保存' : '创建'}
           </Button>
         </DialogActions>
       </Dialog>

@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import { requireUser } from '../services/authService'
 import { asyncHandler, ok, fail } from '../utils/response'
 import { assetService } from '../services/assetService'
 import { monitorService } from '../services/monitorService'
@@ -6,6 +7,9 @@ import { paginate } from '../utils/paginate'
 import type { Asset, AssetType } from '@shared/types'
 
 export const assetsRouter = Router()
+
+// 用户级鉴权：所有路由需携带有效会话 token（与 users/cloud/ai 等路由一致）
+assetsRouter.use(requireUser)
 
 // 列表（/assets 必须在 /assets/:id 之前；/discover 也需在 :id 之前）
 assetsRouter.get('/', asyncHandler(async (req, res) => {

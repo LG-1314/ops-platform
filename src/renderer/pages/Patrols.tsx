@@ -17,12 +17,17 @@ import {
   TextField,
   Tabs,
   Tab,
+  IconButton,
+  Tooltip,
+  Switch,
+  Checkbox,
 } from '@mui/material'
-import { PlayArrow, Add } from '@mui/icons-material'
+import { PlayArrow, Add, Edit as IconEdit, Delete as IconDelete, Schedule as IconSchedule } from '@mui/icons-material'
 import { api } from '../../capabilities/bus'
 import type { PatrolTask, PatrolLayer, PatrolRun, Status } from '@shared/types'
 import PageHeader from '../components/PageHeader'
 import StatusBadge from '../components/StatusBadge'
+import EmptyState from '../components/EmptyState'
 import { Alert as MuiAlert } from '@mui/material'
 
 const LAYER_LABEL: Record<PatrolLayer, string> = {
@@ -33,6 +38,8 @@ const LAYER_LABEL: Record<PatrolLayer, string> = {
   business: '业务',
 }
 
+const ALL_LAYERS: PatrolLayer[] = ['basic', 'middleware', 'container', 'log', 'business']
+
 function runStatus(s: string): Status {
   if (s === 'failed') return 'error'
   if (s === 'running') return 'warn'
@@ -40,15 +47,24 @@ function runStatus(s: string): Status {
   return 'unknown'
 }
 
+interface TaskForm {
+  name: string
+  cron: string
+  layers: PatrolLayer[]
+}
+
+const emptyForm = (): TaskForm => ({ name: '', cron: '0 * * * *', layers: ['basic'] })
+
 export default function Patrols() {
   const [tasks, setTasks] = useState<PatrolTask[]>([])
   const [loading, setLoading] = useState(true)
   const [runningId, setRunningId] = useState('')
   const [open, setOpen] = useState(false)
-  const [name, setName] = useState('')
-  const [cron, setCron] = useState('0 * * * *')
-  const [layers, setLayers] = useState<PatrolLayer[]>(['basic'])
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [form, setForm] = useState<TaskForm>(emptyForm())
   const [error, setError] = useState('')
+  const [selected, setSelected] = useState<string[]>([])
+  const [batchRunning, setBatchRunning] = useState(false)
 
   const load = () => {
     setLoading(true)
@@ -74,57 +90,184 @@ export default function Patrols() {
     }
   }
 
-  const create = async () => {
+  const openCreate = () => {
+    setEditingId(null)
+    setForm(emptyForm())
+    setOpen(true)
+  }
+
+  const openEdit = (t: PatrolTask) => {
+    setEditingId(t.id)
+    setForm({ name: t.name, cron: t.cron, layers: t.layers })
+    setOpen(true)
+  }
+
+  const onSave = async () => {
+    if (!form.name.trim()) {
+      setError('任务名称必填')
+      return
+    }
     setError('')
     try {
-      await api.patrols.create({ name, cron, layers, enabled: true })
+      const payload = { name: form.name.trim(), cron: form.cron.trim(), layers: form.layers }
+      if (editingId) await api.patrols.update(editingId, payload)
+      else await api.patrols.create(payload)
       setOpen(false)
-      setName('')
-      setLayers(['basic'])
       load()
     } catch (e) {
-      setError((e as Error).message || '创建失败')
+      setError((e as Error).message || '保存失败')
     }
+  }
+
+  const onToggle = async (t: PatrolTask, enabled: boolean) => {
+    try {
+      await api.patrols.update(t.id, { enabled })
+      load()
+    } catch (e) {
+      setError((e as Error).message || '更新失败')
+    }
+  }
+
+  const onDelete = async (id: string) => {
+    try {
+      await api.patrols.remove(id)
+      load()
+    } catch (e) {
+      setError((e as Error).message || '删除失败')
+    }
+  }
+
+  const toggleSelected = (id: string) => {
+    setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]))
+  }
+
+  const toggleSelectAll = () => {
+    setSelected((s) => (s.length === tasks.length ? [] : tasks.map((t) => t.id)))
+  }
+
+  const runBatch = async (action: 'enable' | 'disable' | 'delete') => {
+    setBatchRunning(true)
+    setError('')
+    const failed: string[] = []
+    for (const id of selected) {
+      try {
+        if (action === 'delete') await api.patrols.remove(id)
+        else await api.patrols.update(id, { enabled: action === 'enable' })
+      } catch {
+        failed.push(id)
+      }
+    }
+    if (failed.length > 0) setError(`批量操作有 ${failed.length} 项失败`)
+    setSelected([])
+    setBatchRunning(false)
+    load()
+  }
+
+  const toggleLayer = (l: PatrolLayer) => {
+    setForm((f) => ({
+      ...f,
+      layers: f.layers.includes(l) ? f.layers.filter((x) => x !== l) : [...f.layers, l],
+    }))
   }
 
   return (
     <Box>
       <PageHeader
         title="智能巡检"
-        subtitle="基础资源 / 中间件 / 容器 / 日志 / 业务 多层巡检编排"
+        subtitle="基础资源 / 中间件 / 容器 / 日志 / 业务 多层巡检编排 · 支持增删改查与定时执行"
         actions={
-          <Button variant="contained" startIcon={<Add />} onClick={() => setOpen(true)}>
+          <Button variant="contained" startIcon={<Add />} onClick={openCreate}>
             新建巡检
           </Button>
         }
       />
 
       {error && (
-        <MuiAlert severity="error" sx={{ mb: 2 }}>
+        <MuiAlert severity="error" sx={{ mb: 2 }} onClose={() => setError('')}>
           {error}
         </MuiAlert>
+      )}
+
+      {!loading && tasks.length > 0 && (
+        <Card sx={{ mb: 2 }}>
+          <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
+            <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+              <Checkbox
+                size="small"
+                checked={selected.length === tasks.length}
+                indeterminate={selected.length > 0 && selected.length < tasks.length}
+                onChange={toggleSelectAll}
+              />
+              <Typography variant="body2" color="text.secondary">
+                已选 {selected.length} / {tasks.length} 项
+              </Typography>
+              <Box flex={1} />
+              <Button
+                size="small"
+                variant="outlined"
+                disabled={selected.length === 0 || batchRunning}
+                onClick={() => runBatch('enable')}
+              >
+                批量启用
+              </Button>
+              <Button
+                size="small"
+                variant="outlined"
+                disabled={selected.length === 0 || batchRunning}
+                onClick={() => runBatch('disable')}
+              >
+                批量禁用
+              </Button>
+              <Button
+                size="small"
+                variant="outlined"
+                color="error"
+                disabled={selected.length === 0 || batchRunning}
+                onClick={() => runBatch('delete')}
+              >
+                批量删除
+              </Button>
+            </Stack>
+          </CardContent>
+        </Card>
       )}
 
       {loading ? (
         <Box display="flex" justifyContent="center" py={6}>
           <CircularProgress />
         </Box>
+      ) : tasks.length === 0 ? (
+        <Card>
+          <CardContent>
+            <EmptyState
+              text="暂无巡检任务"
+              description="点击「新建巡检」创建一条定时巡检任务，自动检测主机健康并生成报告"
+              icon={<IconSchedule />}
+              action={
+                <Button variant="contained" startIcon={<Add />} onClick={openCreate}>
+                  新建巡检
+                </Button>
+              }
+            />
+          </CardContent>
+        </Card>
       ) : (
         <Grid container spacing={2}>
           {tasks.map((t) => (
             <Grid item xs={12} md={6} key={t.id}>
               <Card>
                 <CardContent>
-                  <Stack
-                    direction="row"
-                    justifyContent="space-between"
-                    alignItems="center"
-                  >
+                  <Stack direction="row" justifyContent="space-between" alignItems="center">
                     <Typography variant="subtitle1">{t.name}</Typography>
-                    <StatusBadge
-                      status={runStatus(t.status)}
-                      label={t.status}
-                    />
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <StatusBadge status={runStatus(t.status)} label={t.status} />
+                      <Switch size="small" checked={t.enabled} onChange={(_, v) => onToggle(t, v)} />
+                      <Checkbox
+                        size="small"
+                        checked={selected.includes(t.id)}
+                        onChange={() => toggleSelected(t.id)}
+                      />
+                    </Stack>
                   </Stack>
                   <Divider sx={{ my: 1.5 }} />
                   <Stack direction="row" spacing={0.5} mb={1} flexWrap="wrap" useFlexGap>
@@ -134,27 +277,31 @@ export default function Patrols() {
                   </Stack>
                   <Typography variant="caption" color="text.secondary">
                     Cron：{t.cron}
-                    {t.lastRunAt
-                      ? ` · 上次执行：${new Date(t.lastRunAt).toLocaleString()}`
-                      : ' · 尚未执行'}
+                    {t.lastRunAt ? ` · 上次执行：${new Date(t.lastRunAt).toLocaleString()}` : ' · 尚未执行'}
                   </Typography>
 
                   <Box mt={1.5}>
-                    <Button
-                      size="small"
-                      variant="contained"
-                      startIcon={
-                        runningId === t.id ? (
-                          <CircularProgress size={16} color="inherit" />
-                        ) : (
-                          <PlayArrow />
-                        )
-                      }
-                      disabled={runningId === t.id}
-                      onClick={() => run(t.id)}
-                    >
-                      {runningId === t.id ? '执行中…' : '立即执行'}
-                    </Button>
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <Button
+                        size="small"
+                        variant="contained"
+                        startIcon={runningId === t.id ? <CircularProgress size={16} color="inherit" /> : <PlayArrow />}
+                        disabled={runningId === t.id}
+                        onClick={() => run(t.id)}
+                      >
+                        {runningId === t.id ? '执行中…' : '立即执行'}
+                      </Button>
+                      <Tooltip title="编辑">
+                        <IconButton size="small" onClick={() => openEdit(t)}>
+                          <IconEdit fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                      <Tooltip title="删除">
+                        <IconButton size="small" color="error" onClick={() => onDelete(t.id)}>
+                          <IconDelete fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    </Stack>
                   </Box>
 
                   {t.history.length > 0 && (
@@ -192,50 +339,47 @@ export default function Patrols() {
         </Grid>
       )}
 
-      <Dialog open={open} onClose={() => setOpen(false)}>
-        <DialogTitle>新建巡检任务</DialogTitle>
+      {/* 新建 / 编辑巡检 */}
+      <Dialog open={open} onClose={() => setOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>{editingId ? '编辑巡检任务' : '新建巡检任务'}</DialogTitle>
         <DialogContent>
-          <Stack spacing={2} sx={{ mt: 1, minWidth: 360 }}>
+          <Stack spacing={2} sx={{ mt: 1 }}>
             <TextField
               label="任务名称"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
+              fullWidth
+              value={form.name}
+              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
             />
             <TextField
               label="Cron 表达式"
-              value={cron}
-              onChange={(e) => setCron(e.target.value)}
+              fullWidth
+              value={form.cron}
+              onChange={(e) => setForm((f) => ({ ...f, cron: e.target.value }))}
             />
-            <Tabs
-              value={0}
-              variant="scrollable"
-              sx={{ borderBottom: 1, borderColor: 'divider' }}
-            >
-              {(['basic', 'middleware', 'container', 'log', 'business'] as PatrolLayer[]).map(
-                (l) => (
-                  <Tab
-                    key={l}
-                    label={LAYER_LABEL[l]}
-                    onClick={() =>
-                      setLayers((prev) =>
-                        prev.includes(l) ? prev.filter((x) => x !== l) : [...prev, l]
-                      )
-                    }
-                  />
-                )
-              )}
+            <Typography variant="caption" color="text.secondary">
+              巡检层级（可多选）
+            </Typography>
+            <Tabs value={0} variant="scrollable" sx={{ borderBottom: 1, borderColor: 'divider' }}>
+              {ALL_LAYERS.map((l) => (
+                <Tab
+                  key={l}
+                  label={LAYER_LABEL[l]}
+                  sx={{ fontWeight: form.layers.includes(l) ? 700 : 400 }}
+                  onClick={() => toggleLayer(l)}
+                />
+              ))}
             </Tabs>
             <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
-              {layers.map((l) => (
-                <Chip key={l} size="small" label={LAYER_LABEL[l]} color="primary" />
+              {form.layers.map((l) => (
+                <Chip key={l} size="small" label={LAYER_LABEL[l]} color="primary" onDelete={() => toggleLayer(l)} />
               ))}
             </Stack>
           </Stack>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setOpen(false)}>取消</Button>
-          <Button variant="contained" onClick={create} disabled={!name}>
-            创建
+          <Button variant="contained" onClick={onSave} disabled={!form.name.trim()}>
+            {editingId ? '保存' : '创建'}
           </Button>
         </DialogActions>
       </Dialog>

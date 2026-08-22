@@ -10,12 +10,17 @@ import type {
   AlertRule,
   DbConnection,
   CloudAccount,
+  CloudChangeLog,
+  CloudResource,
   NotificationChannel,
   CicdPipeline,
   KnowledgeHit,
   GuardrailRun,
   DoloresRun,
   UserAccount,
+  ServiceCheck,
+  AiConfig,
+  AiAgent,
 } from '@shared/types'
 import { loadStore, schedulePersist, persistNow } from './persist'
 import { encrypt } from '../utils/crypto'
@@ -38,6 +43,11 @@ interface Store {
   guardrailRuns: GuardrailRun[]
   doloresRuns: DoloresRun[]
   users: UserAccount[]
+  serviceChecks: ServiceCheck[]
+  cloudChanges: CloudChangeLog[]
+  cloudSnapshots: Record<string, CloudResource[]>
+  aiConfig?: AiConfig
+  aiAgents?: AiAgent[]
 }
 
 function genId(prefix: string): string {
@@ -60,6 +70,10 @@ const store: Store = {
   guardrailRuns: [],
   doloresRuns: [],
   users: [],
+  aiAgents: [],
+  serviceChecks: [],
+  cloudChanges: [],
+  cloudSnapshots: {},
 }
 
 function seed(): void {
@@ -127,6 +141,9 @@ function seed(): void {
       title: 'db-01 内存使用率偏高',
       assetId: 'db-01',
       message: '内存使用率 91%，接近阈值',
+      currentValue: 91,
+      threshold: 90,
+      unit: '%',
       state: 'active',
       createdAt: now,
     },
@@ -136,6 +153,9 @@ function seed(): void {
       title: 'web-01 磁盘空间预警',
       assetId: 'web-01',
       message: '系统盘使用率 82%',
+      currentValue: 82,
+      threshold: 80,
+      unit: '%',
       state: 'ack',
       createdAt: now,
       ackedBy: 'ops',
@@ -179,6 +199,82 @@ function seed(): void {
       mustChangePassword: true,
     })
   }
+
+  // 预置 AI 智能体（角色化运维专家）：新装即开箱可用，可编辑 / 增删 / 启停
+  if (store.aiAgents === undefined || store.aiAgents.length === 0) {
+    store.aiAgents = seedAiAgents(now)
+  }
+}
+
+function seedAiAgents(now: string): AiAgent[] {
+  return [
+    {
+      id: 'agent-troubleshoot',
+      name: '故障排查专家',
+      role: '故障根因定位',
+      description: '解析告警 / 系统报错 / 主机故障，定位根因并输出标准化排查步骤与安全修复命令',
+      icon: 'troubleshoot',
+      enabled: true,
+      createdAt: now,
+      systemPrompt:
+        '你是「运维全维度管理平台」的故障排查专家。收到故障现象/告警/日志后：① 按概率排序列出最可能根因；② 给出 step-by-step 排查命令与步骤；③ 给出安全处置方案与命令；④ 高危操作必须提醒生产审批。回答使用简体中文，专业、简洁、可执行。',
+    },
+    {
+      id: 'agent-patrol',
+      name: '巡检分析师',
+      role: '巡检报告与整改建议',
+      description: '对巡检结果智能评级、风险归类，自动生成结构化巡检报告与整改清单',
+      icon: 'patrol',
+      enabled: true,
+      createdAt: now,
+      systemPrompt:
+        '你是平台巡检分析师。收到巡检结果/资产数据后：① 对整体健康评级（优/良/中/差）并说明理由；② 按风险优先级列出需整改项；③ 给出整改清单与长期优化建议；④ 生成可直接用于团队汇报的结构化报告。使用简体中文。',
+    },
+    {
+      id: 'agent-deploy',
+      name: '部署配置专家',
+      role: '脚本与配置生成',
+      description: '生成部署脚本、服务配置、启停命令，支持自然语言对话式运维操作',
+      icon: 'deploy',
+      enabled: true,
+      createdAt: now,
+      systemPrompt:
+        '你是部署配置专家。根据用户需求生成：部署脚本（bash/systemd/docker-compose）、服务配置文件、启停命令、参数调优建议。生成的命令要安全、可注释、符合最佳实践；涉及生产环境要提示先走审批。使用简体中文。',
+    },
+    {
+      id: 'agent-log',
+      name: '日志清洗分析师',
+      role: '日志分析与异常归类',
+      description: '清洗海量运维日志、过滤噪声、精准定位异常并归类故障类型、统计频次',
+      icon: 'log',
+      enabled: true,
+      createdAt: now,
+      systemPrompt:
+        '你是日志清洗分析师。收到日志片段后：① 过滤无效/重复/噪声日志；② 提取关键异常并归类故障类型；③ 统计异常频次；④ 输出日志分析报告与处理建议。若日志含敏感信息（密钥/口令）要标注脱敏提示。使用简体中文。',
+    },
+    {
+      id: 'agent-risk',
+      name: '资源风险预判师',
+      role: '容量趋势与过载预警',
+      description: '基于主机 / 集群 / 云资源使用率趋势，预判内存、磁盘、负载、带宽过载风险',
+      icon: 'risk',
+      enabled: true,
+      createdAt: now,
+      systemPrompt:
+        '你是资源风险预判师。收到资源使用率数据后：① 判断内存/磁盘/负载/带宽是否存在过载风险；② 给出风险等级与预计恶化时间；③ 给出扩容/优化建议与预警阈值设置建议。使用简体中文。',
+    },
+    {
+      id: 'agent-security',
+      name: '安全审计员',
+      role: '变更防呆与安全审计',
+      description: '审核变更命令 / 配置，识别危险操作与敏感信息，输出安全审计意见',
+      icon: 'security',
+      enabled: true,
+      createdAt: now,
+      systemPrompt:
+        '你是安全审计员。对变更命令/配置进行安全审计：① 识别危险命令（rm -rf /、删库、格式化、chmod 777 等）与敏感信息泄露；② 给出风险等级；③ 给出安全替代方案；④ 提示生产环境需审批。使用简体中文。',
+    },
+  ]
 }
 
 // 初始化：有持久化文件则合并加载，否则播种并落盘
@@ -200,6 +296,12 @@ if (persisted && typeof persisted === 'object') {
   store.guardrailRuns = p.guardrailRuns ?? []
   store.doloresRuns = p.doloresRuns ?? []
   store.users = p.users ?? []
+  store.serviceChecks = p.serviceChecks ?? []
+  store.cloudChanges = p.cloudChanges ?? []
+  store.cloudSnapshots = p.cloudSnapshots ?? {}
+  store.aiConfig = p.aiConfig
+  // 老版本数据升级：无 AI 智能体时播种预置专家
+  store.aiAgents = p.aiAgents && p.aiAgents.length ? p.aiAgents : seedAiAgents(new Date().toISOString())
   // 老版本数据升级：无任何用户时播种默认管理员 admin/admin123
   if (store.users.length === 0) {
     store.users.push({
@@ -442,6 +544,43 @@ export const memoryStore = {
     return true
   },
 
+  // 云资源同步：快照 + 变更日志（日志按 200 条封顶，避免无限增长）
+  getCloudSnapshot: (accountId: string): CloudResource[] | undefined => store.cloudSnapshots[accountId],
+  setCloudSnapshot: (accountId: string, resources: CloudResource[]): void => {
+    store.cloudSnapshots[accountId] = resources
+    persist()
+  },
+  addCloudChanges: (changes: CloudChangeLog[]): void => {
+    if (!changes.length) return
+    store.cloudChanges.unshift(...changes)
+    if (store.cloudChanges.length > 200) store.cloudChanges.length = 200
+    persist()
+  },
+  getCloudChanges: (accountId?: string): CloudChangeLog[] =>
+    accountId ? store.cloudChanges.filter((c) => c.accountId === accountId) : store.cloudChanges,
+
+  // 服务巡检
+  getServiceChecks: (): ServiceCheck[] => store.serviceChecks,
+  addServiceCheck: (c: ServiceCheck): ServiceCheck => {
+    store.serviceChecks.push(c)
+    persist()
+    return c
+  },
+  updateServiceCheck: (id: string, patch: Partial<ServiceCheck>): ServiceCheck | undefined => {
+    const i = store.serviceChecks.findIndex((x) => x.id === id)
+    if (i < 0) return undefined
+    store.serviceChecks[i] = { ...store.serviceChecks[i], ...patch, id }
+    persist()
+    return store.serviceChecks[i]
+  },
+  removeServiceCheck: (id: string): boolean => {
+    const i = store.serviceChecks.findIndex((x) => x.id === id)
+    if (i < 0) return false
+    store.serviceChecks.splice(i, 1)
+    persist()
+    return true
+  },
+
   // 通知渠道
   getNotificationChannels: (): NotificationChannel[] => store.notificationChannels,
   addNotificationChannel: (c: NotificationChannel): NotificationChannel => {
@@ -549,6 +688,42 @@ export const memoryStore = {
       return false
     }
     store.users.splice(i, 1)
+    persist()
+    return true
+  },
+
+  // AI 大模型配置（apiKey 加密存储，绝不明文落盘）
+  getAiConfig: (): AiConfig | undefined => store.aiConfig,
+  setAiConfig: (cfg: AiConfig): AiConfig => {
+    store.aiConfig = cfg
+    persist()
+    return cfg
+  },
+
+  // AI 智能体（角色化运维专家）
+  getAiAgents: (): AiAgent[] => store.aiAgents || [],
+  addAiAgent: (a: AiAgent): AiAgent => {
+    const list = store.aiAgents || []
+    list.push(a)
+    store.aiAgents = list
+    persist()
+    return a
+  },
+  updateAiAgent: (id: string, patch: Partial<AiAgent>): AiAgent | undefined => {
+    const list = store.aiAgents || []
+    const i = list.findIndex((x) => x.id === id)
+    if (i < 0) return undefined
+    list[i] = { ...list[i], ...patch, id }
+    store.aiAgents = list
+    persist()
+    return list[i]
+  },
+  removeAiAgent: (id: string): boolean => {
+    const list = store.aiAgents || []
+    const i = list.findIndex((x) => x.id === id)
+    if (i < 0) return false
+    list.splice(i, 1)
+    store.aiAgents = list
     persist()
     return true
   },
