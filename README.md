@@ -13,10 +13,11 @@
 npm install
 ```
 
-然后双击 `scripts/pack.bat`，或运行 `npm run pack:win`。产物在 `release/`：
+然后双击 `scripts/pack.bat`，或运行 `npm run pack:win`。一次打出安装包和绿色版，产物在 `release/`：
 
 - 安装包：`运维全维度管理平台-0.1.0-setup.exe`
-- 免安装目录：`release/win-unpacked/`
+- 绿色版压缩包：`运维全维度管理平台-0.1.0-green.zip`（解压即用）
+- 绿色版目录：`release/win-unpacked/`
 
 ## 快速启动
 

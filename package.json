@@ -9,7 +9,7 @@
     "dev": "vite",
     "build": "cross-env BUILD_ELECTRON=true vite build",
     "build:win": "npm run pack:win",
-    "pack:win": "npm run build && electron-builder --win --x64",
+    "pack:win": "npm run build && electron-builder --win --x64 --config.directories.output=release",
     "test": "tsx --test src/server/__tests__/unit.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "eslint src --ext .ts,.tsx",
@@ -95,7 +95,6 @@
     },
     "win": {
       "target": "nsis",
-      "artifactName": "${productName}-${version}-setup.${ext}",
       "icon": "build/icon.ico"
     },
     "nsis": {
@@ -104,6 +103,7 @@
       "allowToChangeInstallationDirectory": true,
       "include": "build/installer.nsh",
       "deleteAppDataOnUninstall": false,
+      "artifactName": "${productName}-${version}-setup.${ext}",
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico"
     }

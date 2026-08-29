@@ -7,10 +7,7 @@ node_modules/
 dist/
 dist-electron/
 release/
-release-v2/
 release-enterprise/
-release-final/
-release-final-new/
 build/.icon-sizes/
 build/icon-source.png
 *.blockmap
