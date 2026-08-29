@@ -3,7 +3,7 @@
 # 依赖
 node_modules/
 
-# 构建产物
+# 构建产物（安装包由本地一键打包生成，不入库）
 dist/
 dist-electron/
 release/

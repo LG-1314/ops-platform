@@ -5,6 +5,19 @@
 > 形态：Electron 桌面壳 + Vite 本地网页预览；后端 Node/Express 作为「能力总线」暴露 REST API。
 > 版本：v0.1.0 · 55 项测试全部通过
 
+## 一键打包
+
+仓库只收源码。克隆后执行：
+
+```bash
+npm install
+```
+
+然后双击 `scripts/pack.bat`，或运行 `npm run pack:win`。产物在 `release/`：
+
+- 安装包：`运维全维度管理平台-0.1.0-setup.exe`
+- 免安装目录：`release/win-unpacked/`
+
 ## 快速启动
 
 ```bash
@@ -17,11 +30,6 @@ npx tsx src/server/index.ts
 # 终端 2：启动 Vite 前端预览
 npm run dev
 # 打开 http://127.0.0.1:5173
-
-# 3. 生产构建（测试 + 构建 + NSIS 安装包）
-# 推荐：双击 scripts/pack.bat，或：
-npm run pack:win
-# 产物在 release/ ：安装包 *.exe 与免安装目录 win-unpacked/
 ```
 
 ## 架构

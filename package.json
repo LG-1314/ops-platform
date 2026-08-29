@@ -87,6 +87,8 @@
       }
     ],
     "npmRebuild": false,
+    "compression": "maximum",
+    "electronLanguages": ["zh-CN", "en-US"],
     "directories": {
       "output": "release",
       "buildResources": "build"
