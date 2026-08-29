@@ -11,6 +11,8 @@ import { USER_TOKEN_KEY, USER_INFO_KEY } from '../../capabilities/bus'
 interface Session {
   token: string | null
   user: SafeUser | null
+  /** 当前界面视图角色；不改变服务端授予的真实角色。 */
+  viewRole: UserRole
 }
 
 const STORAGE_KEY = 'ops-user-role' // 兼容旧版本地身份（无登录时兜底）
@@ -35,7 +37,17 @@ function readToken(): string | null {
 const initialUser = readUser()
 const initialToken = readToken()
 
-let session: Session = { token: initialToken, user: initialUser }
+function readViewRole(user: SafeUser | null): UserRole {
+  // 只有真实管理员可以切换个人视图；个人账号永远不能本地提权。
+  if (user?.role !== 'admin') return user?.role ?? 'personal'
+  try {
+    return localStorage.getItem(STORAGE_KEY) === 'personal' ? 'personal' : 'admin'
+  } catch {
+    return 'admin'
+  }
+}
+
+let session: Session = { token: initialToken, user: initialUser, viewRole: readViewRole(initialUser) }
 const listeners = new Set<() => void>()
 
 function subscribe(cb: () => void): () => void {
@@ -54,7 +66,7 @@ export function useUser(): SafeUser | null {
 
 /** 当前角色：未登录返回 'personal'（保守）；登录后取用户角色。 */
 export function useUserRole(): UserRole {
-  return useSyncExternalStore(subscribe, () => session.user?.role ?? 'personal')
+  return useSyncExternalStore(subscribe, () => session.viewRole)
 }
 
 /** 是否已登录。 */
@@ -64,7 +76,7 @@ export function useIsLoggedIn(): boolean {
 
 /** 登录成功：写入 token + user 并通知。 */
 export function setSession(token: string, user: SafeUser): void {
-  session = { token, user }
+  session = { token, user, viewRole: user.role }
   try {
     localStorage.setItem(USER_TOKEN_KEY, token)
     localStorage.setItem(USER_INFO_KEY, JSON.stringify(user))
@@ -76,7 +88,7 @@ export function setSession(token: string, user: SafeUser): void {
 
 /** 登出：清除会话。 */
 export function clearSession(): void {
-  session = { token: null, user: null }
+  session = { token: null, user: null, viewRole: 'personal' }
   try {
     localStorage.removeItem(USER_TOKEN_KEY)
     localStorage.removeItem(USER_INFO_KEY)
@@ -89,9 +101,9 @@ export function clearSession(): void {
 /** 供 TopBar 身份切换（登录后手动切换视角；未登录无意义，被路由守卫拦截）。 */
 export function setUserRole(role: UserRole): void {
   if (!session.user) return
-  session = { ...session, user: { ...session.user, role } }
+  if (role === 'admin' && session.user.role !== 'admin') return
+  session = { ...session, viewRole: role }
   try {
-    localStorage.setItem(USER_INFO_KEY, JSON.stringify(session.user))
     localStorage.setItem(STORAGE_KEY, role)
   } catch {
     /* ignore */
@@ -102,7 +114,9 @@ export function setUserRole(role: UserRole): void {
 /** 更新当前登录用户信息（改密后清除 mustChangePassword 标记等）。 */
 export function updateUserInfo(patch: Partial<SafeUser>): void {
   if (!session.user) return
-  session = { ...session, user: { ...session.user, ...patch } }
+  const user = { ...session.user, ...patch }
+  const viewRole = user.role === 'admin' ? session.viewRole : user.role
+  session = { ...session, user, viewRole }
   try {
     localStorage.setItem(USER_INFO_KEY, JSON.stringify(session.user))
   } catch {

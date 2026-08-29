@@ -8,7 +8,7 @@ interface Props {
 
 /**
  * 运维全维度管理平台品牌标识。
- * 盾形外壳 + 内部脉冲节点，表达「全维度守护 / 实时监测」。
+ * 盾形外壳 + 六边形监测网，表达「全维度守护 / 实时监测」。
  * 渐变取自主题 primary，自动适配深/浅色。
  */
 export default function Logo({ size = 28, withText = false }: Props) {
@@ -45,21 +45,26 @@ export default function Logo({ size = 28, withText = false }: Props) {
           strokeWidth="2.4"
           strokeLinejoin="round"
         />
-        {/* 中心脉冲节点 */}
-        <circle cx="24" cy="22" r="4.2" fill={`url(#${gradId})`} />
-        {/* 环绕监测点 */}
-        <circle cx="24" cy="11" r="2" fill={c1} />
-        <circle cx="35" cy="20" r="2" fill={c2} />
-        <circle cx="30" cy="33" r="2" fill={c1} />
-        <circle cx="18" cy="33" r="2" fill={c2} />
-        <circle cx="13" cy="20" r="2" fill={c1} />
-        {/* 连接线 */}
+        {/* 中心脉冲 + 六边形监测网，与桌面图标同源 */}
         <path
-          d="M24 11L24 17.8M35 20L28.2 21.4M30 33L26.2 25.4M18 33L21.8 25.4M13 20L19.8 21.4"
+          d="M24 12L32.8 17.2L32.8 26.8L24 32L15.2 26.8L15.2 17.2Z"
           stroke={c1}
-          strokeWidth="1.2"
-          opacity="0.5"
+          strokeWidth="1.15"
+          opacity="0.45"
         />
+        <path
+          d="M24 22L24 12M24 22L32.8 17.2M24 22L32.8 26.8M24 22L24 32M24 22L15.2 26.8M24 22L15.2 17.2"
+          stroke={c2}
+          strokeWidth="1.15"
+          opacity="0.55"
+        />
+        <circle cx="24" cy="22" r="3.6" fill={`url(#${gradId})`} />
+        <circle cx="24" cy="12" r="1.8" fill={c1} />
+        <circle cx="32.8" cy="17.2" r="1.8" fill={c2} />
+        <circle cx="32.8" cy="26.8" r="1.8" fill={c1} />
+        <circle cx="24" cy="32" r="1.8" fill={c2} />
+        <circle cx="15.2" cy="26.8" r="1.8" fill={c1} />
+        <circle cx="15.2" cy="17.2" r="1.8" fill={c2} />
       </svg>
       {withText && (
         <Box sx={{ lineHeight: 1.1 }}>

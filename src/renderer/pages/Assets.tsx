@@ -17,7 +17,7 @@ import {
   Chip,
   useTheme,
 } from '@mui/material'
-import { Search, Refresh, Add, DeleteOutline, Radar, Edit as EditIcon, CheckBox as IconSelect, Download as IconExport, Sell as IconTag } from '@mui/icons-material'
+import { Search, Refresh, Add, DeleteOutline, Radar, Edit as EditIcon, CheckBox as IconSelect, Download as IconExport, Sell as IconTag, NetworkCheck } from '@mui/icons-material'
 import { useSearchParams } from 'react-router-dom'
 import { api } from '../../capabilities/bus'
 import type { Asset, AssetType, Status, Credential } from '@shared/types'
@@ -44,6 +44,33 @@ interface AddForm {
   tags: string
 }
 
+type FormErrors = Partial<Record<'name' | 'host' | 'ip' | 'port' | 'tags', string>>
+type ConnectionTestState =
+  | { state: 'idle' }
+  | { state: 'testing' }
+  | { state: 'success'; message: string }
+  | { state: 'failed'; message: string }
+
+const EMPTY_FORM: AddForm = { name: '', type: 'server', host: '', ip: '', port: '', tags: '' }
+
+function assetFormSnapshot(form: AddForm, credentialId: string): string {
+  return JSON.stringify({ ...form, credentialId })
+}
+
+function validateAssetForm(form: AddForm, requireName = true): FormErrors {
+  const errors: FormErrors = {}
+  const host = form.host.trim()
+  const port = form.port.trim()
+  if (requireName && !form.name.trim()) errors.name = '请输入资产名称'
+  if (!host) errors.host = '请输入主机地址'
+  else if (host.length > 253 || /\s/.test(host) || !/^[a-zA-Z0-9:.-]+$/.test(host)) errors.host = '请输入 IPv4、IPv6 或合法主机名'
+  if (form.ip.trim() && !/^(?:\d{1,3}\.){3}\d{1,3}$|^[0-9a-fA-F:]+$/.test(form.ip.trim())) errors.ip = '请输入有效 IP 地址，或留空'
+  if (port && (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535)) errors.port = '端口范围为 1 至 65535'
+  const tags = form.tags.split(',').map((tag) => tag.trim()).filter(Boolean)
+  if (tags.length > 30 || tags.some((tag) => tag.length > 32)) errors.tags = '最多 30 个标签，单个标签不超过 32 个字符'
+  return errors
+}
+
 export default function Assets() {
   const theme = useTheme()
   const [searchParams] = useSearchParams()
@@ -58,10 +85,16 @@ export default function Assets() {
 
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [form, setForm] = useState<AddForm>({ name: '', type: 'server', host: '', ip: '', port: '', tags: '' })
+  const [form, setForm] = useState<AddForm>(EMPTY_FORM)
   const [submitting, setSubmitting] = useState(false)
   const [credentials, setCredentials] = useState<Credential[]>([])
   const [credentialId, setCredentialId] = useState('')
+  const [credentialLoadError, setCredentialLoadError] = useState('')
+  const [formErrors, setFormErrors] = useState<FormErrors>({})
+  const [formSubmitError, setFormSubmitError] = useState('')
+  const [connectionTest, setConnectionTest] = useState<ConnectionTestState>({ state: 'idle' })
+  const [initialFormSnapshot, setInitialFormSnapshot] = useState('')
+  const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
   const [deleting, setDeleting] = useState(false)
   // 批量操作：勾选集合 / 批量打标签弹窗
@@ -158,34 +191,64 @@ export default function Assets() {
 
   const openAdd = () => {
     setEditingId(null)
-    setForm({ name: '', type: 'server', host: '', ip: '', port: '', tags: '' })
+    const nextForm = { ...EMPTY_FORM }
+    setForm(nextForm)
     setCredentialId('')
-    api.credentials.list().then(setCredentials).catch(() => {})
+    setFormErrors({})
+    setFormSubmitError('')
+    setConnectionTest({ state: 'idle' })
+    setInitialFormSnapshot(assetFormSnapshot(nextForm, ''))
+    setCredentialLoadError('')
+    api.credentials.list().then(setCredentials).catch(() => setCredentialLoadError('凭据列表加载失败，可稍后重试'))
     setDialogOpen(true)
   }
 
   const openEdit = (a: Asset) => {
     setEditingId(a.id)
-    setForm({
+    const nextForm = {
       name: a.name,
       type: a.type,
       host: a.host || '',
       ip: a.ip || '',
       port: a.port ? String(a.port) : '',
       tags: (a.tags || []).join(', '),
-    })
+    }
+    setForm(nextForm)
     setCredentialId(a.credentialId || '')
-    api.credentials.list().then(setCredentials).catch(() => {})
+    setFormErrors({})
+    setFormSubmitError('')
+    setConnectionTest({ state: 'idle' })
+    setInitialFormSnapshot(assetFormSnapshot(nextForm, a.credentialId || ''))
+    setCredentialLoadError('')
+    api.credentials.list().then(setCredentials).catch(() => setCredentialLoadError('凭据列表加载失败，可稍后重试'))
     setDialogOpen(true)
   }
 
+  const isFormDirty = dialogOpen && initialFormSnapshot !== assetFormSnapshot(form, credentialId)
+
+  const requestClose = () => {
+    if (submitting) return
+    if (isFormDirty) {
+      setDiscardConfirmOpen(true)
+      return
+    }
+    setDialogOpen(false)
+  }
+
+  const discardAndClose = () => {
+    setDiscardConfirmOpen(false)
+    setDialogOpen(false)
+  }
+
   const submitAdd = async () => {
-    if (!form.name.trim() || !form.host.trim()) {
-      setError('名称与主机/IP 为必填')
+    const errors = validateAssetForm(form)
+    if (Object.keys(errors).length > 0) {
+      setFormErrors(errors)
+      setFormSubmitError('请修正表单中的输入后再保存')
       return
     }
     setSubmitting(true)
-    setError('')
+    setFormSubmitError('')
     try {
       const payload = {
         name: form.name.trim(),
@@ -202,9 +265,28 @@ export default function Assets() {
       setDialogOpen(false)
       await load()
     } catch (e) {
-      setError((e as Error).message || '保存失败')
+      setFormSubmitError((e as Error).message || '保存失败')
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  const testConnection = async () => {
+    const errors = validateAssetForm(form, false)
+    if (Object.keys(errors).length > 0) {
+      setFormErrors(errors)
+      setConnectionTest({ state: 'failed', message: '请先修正主机、IP 或端口格式' })
+      return
+    }
+    setConnectionTest({ state: 'testing' })
+    try {
+      const result = await api.assets.testConnection({ host: form.host.trim(), ip: form.ip.trim() || undefined, port: form.port ? Number(form.port) : undefined })
+      setConnectionTest({
+        state: result.reachable ? 'success' : 'failed',
+        message: result.reachable ? `连接成功${result.latencyMs != null ? `，延迟 ${result.latencyMs}ms` : ''}` : '连接失败，请检查地址、端口或网络',
+      })
+    } catch (e) {
+      setConnectionTest({ state: 'failed', message: (e as Error).message || '连接测试失败' })
     }
   }
 
@@ -531,7 +613,7 @@ export default function Assets() {
 
       <Dialog
         open={dialogOpen}
-        onClose={() => !submitting && setDialogOpen(false)}
+        onClose={requestClose}
         maxWidth="xs"
         fullWidth
       >
@@ -543,7 +625,9 @@ export default function Assets() {
               label="名称"
               placeholder="如 web-02"
               value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              error={Boolean(formErrors.name)}
+              helperText={formErrors.name}
+              onChange={(e) => { setForm({ ...form, name: e.target.value }); setFormErrors((prev) => ({ ...prev, name: undefined })) }}
             />
             <TextField
               select
@@ -563,35 +647,43 @@ export default function Assets() {
               label="主机 / IP"
               placeholder="如 10.0.1.12 或 host.example.com"
               value={form.host}
-              onChange={(e) => setForm({ ...form, host: e.target.value })}
+              error={Boolean(formErrors.host)}
+              helperText={formErrors.host}
+              onChange={(e) => { setForm({ ...form, host: e.target.value }); setFormErrors((prev) => ({ ...prev, host: undefined })); setConnectionTest({ state: 'idle' }) }}
             />
             <TextField
               size="small"
               label="IP（可选）"
               placeholder="展示用，可留空"
               value={form.ip}
-              onChange={(e) => setForm({ ...form, ip: e.target.value })}
+              error={Boolean(formErrors.ip)}
+              helperText={formErrors.ip}
+              onChange={(e) => { setForm({ ...form, ip: e.target.value }); setFormErrors((prev) => ({ ...prev, ip: undefined })); setConnectionTest({ state: 'idle' }) }}
             />
             <TextField
               size="small"
               label="端口（可选）"
               placeholder="填了则 TCP 探测该端口，留空则 ping"
               value={form.port}
-              onChange={(e) => setForm({ ...form, port: e.target.value })}
+              error={Boolean(formErrors.port)}
+              helperText={formErrors.port}
+              onChange={(e) => { setForm({ ...form, port: e.target.value }); setFormErrors((prev) => ({ ...prev, port: undefined })); setConnectionTest({ state: 'idle' }) }}
             />
             <TextField
               size="small"
               label="标签（可选，逗号分隔）"
               placeholder="web,nginx"
               value={form.tags}
-              onChange={(e) => setForm({ ...form, tags: e.target.value })}
+              error={Boolean(formErrors.tags)}
+              helperText={formErrors.tags}
+              onChange={(e) => { setForm({ ...form, tags: e.target.value }); setFormErrors((prev) => ({ ...prev, tags: undefined })) }}
             />
             <TextField
               select
               size="small"
               label="SSH 凭据（可选，采集指标/终端/服务检查用）"
               value={credentialId}
-              onChange={(e) => setCredentialId(e.target.value)}
+              onChange={(e) => { setCredentialId(e.target.value); setConnectionTest({ state: 'idle' }) }}
             >
               <MenuItem value="">
                 <em>不关联</em>
@@ -602,15 +694,30 @@ export default function Assets() {
                 </MenuItem>
               ))}
             </TextField>
+            {credentialLoadError && <MuiAlert severity="warning" action={<Button size="small" onClick={() => api.credentials.list().then((list) => { setCredentials(list); setCredentialLoadError('') }).catch(() => setCredentialLoadError('凭据列表加载失败，可稍后重试'))}>重试</Button>}>{credentialLoadError}</MuiAlert>}
+            {formSubmitError && <MuiAlert severity="error">{formSubmitError}</MuiAlert>}
+            {connectionTest.state !== 'idle' && connectionTest.state !== 'testing' && <MuiAlert severity={connectionTest.state === 'success' ? 'success' : 'error'}>{connectionTest.message}</MuiAlert>}
           </Stack>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setDialogOpen(false)} disabled={submitting}>
+          <Button onClick={requestClose} disabled={submitting}>
             取消
+          </Button>
+          <Button variant="outlined" startIcon={connectionTest.state === 'testing' ? <CircularProgress size={16} /> : <NetworkCheck />} onClick={() => void testConnection()} disabled={submitting || connectionTest.state === 'testing'}>
+            测试连接
           </Button>
           <Button variant="contained" onClick={submitAdd} disabled={submitting}>
             {submitting ? '保存中…' : editingId ? '保存' : '添加'}
           </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={discardConfirmOpen} onClose={() => setDiscardConfirmOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>放弃未保存的修改？</DialogTitle>
+        <DialogContent>当前表单还有未保存内容，关闭后将丢失这些修改。</DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDiscardConfirmOpen(false)}>继续编辑</Button>
+          <Button color="error" variant="contained" onClick={discardAndClose}>放弃修改</Button>
         </DialogActions>
       </Dialog>
 

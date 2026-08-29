@@ -71,7 +71,8 @@ export const knowledgeService = {
       }
       return score
     }
-    return [...userHits.sort((a, b) => rank(b) - rank(a)), ...builtinHits]
+    // 用户维护与内置知识统一参与排序，避免低相关的用户条目遮挡高相关答案。
+    return [...userHits, ...builtinHits].sort((a, b) => rank(b) - rank(a))
   },
 
   /** 自维护 + 内置 FAQ 合并列表（让「知识库」页开箱即丰富，内置条目不可删） */

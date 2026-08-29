@@ -233,7 +233,7 @@ test('auth: 会话过期后 currentUser 返回 null', async () => {
 })
 
 // —— 防火墙解析 ——
-import { parseFirewallRules, validateRuleInput, buildRuleCommand } from '../services/firewallService'
+import { parseFirewallRules, validateRuleInput, buildRuleCommand, deleteFirewallRule } from '../services/firewallService'
 
 test('firewall: parse iptables -S 输出', () => {
   const out = [
@@ -300,6 +300,17 @@ test('firewall: buildRuleCommand', () => {
   assert.ok(cmd2.includes('-A FORWARD'))
   assert.ok(cmd2.includes('-j DROP'))
   assert.ok(!cmd2.includes('--dport'))
+})
+
+test('firewall: 规则参数含 shell 字符时会被安全包裹', () => {
+  const cmd = buildRuleCommand({ chain: 'INPUT', protocol: 'tcp', source: '10.0.0.1; touch /tmp/pwn', port: '22', action: 'ACCEPT' })
+  assert.ok(cmd.includes("-s '10.0.0.1; touch /tmp/pwn'"))
+})
+
+test('firewall: 删除规则拒绝 shell 控制字符', async () => {
+  const result = await deleteFirewallRule({} as never, '-A INPUT -j ACCEPT; echo injected')
+  assert.equal(result.ok, false)
+  assert.ok(result.message.includes('不安全字符'))
 })
 
 // —— 知识检索合并自维护知识 ——
@@ -452,8 +463,131 @@ test('cloud: diffResources 检测新增/下线/规格变化', () => {
   assert.equal(removed?.resourceId, 'i-2')
 })
 
+// —— 监控汇总：离线/未探测资产健康分不可用 ——
+import { buildMonitorSummary } from '../routes/monitor'
+
+test('monitor: summary 离线/未探测主机不返回 0 分误导评分', () => {
+  const now = '2026-08-23T00:00:00Z'
+  const summary = buildMonitorSummary(
+    [
+      {
+        id: 'host-online',
+        name: 'online',
+        type: 'server',
+        host: '10.0.0.1',
+        source: 'manual',
+        tags: [],
+        createdAt: now,
+        healthScore: 96,
+        status: 'ok',
+        reachable: true,
+      },
+      {
+        id: 'host-offline',
+        name: 'offline',
+        type: 'server',
+        host: '10.0.0.2',
+        source: 'manual',
+        tags: [],
+        createdAt: now,
+        healthScore: 0,
+        status: 'error',
+        reachable: false,
+      },
+      {
+        id: 'host-unknown',
+        name: 'unknown',
+        type: 'server',
+        host: '10.0.0.3',
+        source: 'manual',
+        tags: [],
+        createdAt: now,
+        healthScore: 0,
+        status: 'unknown',
+      },
+    ],
+    [],
+    [],
+    [],
+    () => undefined,
+    now
+  )
+
+  assert.equal(summary.hosts.find((h) => h.id === 'host-online')?.healthScore, 96)
+  assert.equal(summary.hosts.find((h) => h.id === 'host-offline')?.healthScore, null)
+  assert.equal(summary.hosts.find((h) => h.id === 'host-unknown')?.healthScore, null)
+})
+
+test('monitor: 采集失败会把主机标记为连接失败并记录原因', async () => {
+  const { memoryStore } = await import('../store/memoryStore')
+  const { markAssetConnectionFailure } = await import('../services/assetHealthService')
+  const now = '2026-08-23T00:00:00Z'
+  memoryStore.addAsset({
+    id: 'host-collect-failed',
+    name: 'collect-failed',
+    type: 'server',
+    host: '10.0.0.9',
+    source: 'manual',
+    tags: [],
+    createdAt: now,
+    healthScore: 99,
+    status: 'ok',
+    reachable: true,
+  })
+
+  try {
+    const updated = markAssetConnectionFailure('host-collect-failed', 'SSH 连接超时', now)
+    assert.equal(updated?.reachable, false)
+    assert.equal(updated?.status, 'error')
+    assert.equal(updated?.healthScore, 0)
+    assert.equal(updated?.statusReason, 'SSH 连接超时')
+    assert.equal(updated?.lastCheckAt, now)
+  } finally {
+    memoryStore.removeAsset('host-collect-failed')
+  }
+})
+
+test('monitor: 采集成功会恢复在线状态并按资源阈值标记异常', async () => {
+  const { memoryStore } = await import('../store/memoryStore')
+  const { markAssetCollectionSuccess } = await import('../services/assetHealthService')
+  const now = '2026-08-23T00:00:00Z'
+  memoryStore.addAsset({
+    id: 'host-collect-ok',
+    name: 'collect-ok',
+    type: 'server',
+    host: '10.0.0.10',
+    source: 'manual',
+    tags: [],
+    createdAt: now,
+    healthScore: 0,
+    status: 'error',
+    statusReason: '上次采集失败',
+    reachable: false,
+  })
+
+  try {
+    const updated = markAssetCollectionSuccess('host-collect-ok', {
+      assetId: 'host-collect-ok',
+      collectedAt: now,
+      cpuIdle: 4,
+      memTotalMb: 1000,
+      memUsedMb: 760,
+      disk: [{ mount: '/', totalGb: 100, usedGb: 92, usedPct: 92 }],
+      status: 'ok',
+    })
+    assert.equal(updated?.reachable, true)
+    assert.equal(updated?.status, 'error')
+    assert.equal(updated?.statusReason, undefined)
+    assert.equal(updated?.lastCheckAt, now)
+    assert.ok((updated?.healthScore ?? 100) < 80)
+  } finally {
+    memoryStore.removeAsset('host-collect-ok')
+  }
+})
+
 // —— 服务巡检：systemd 状态解析 / 端口探测 ——
-import { parseSystemdActive, tcpCheck } from '../services/serviceCheckService'
+import { parseSystemdActive, tcpCheck, shellQuote } from '../services/serviceCheckService'
+import { shellQuoteArg } from '../services/sshService'
 
 test('service-check: systemd 状态解析', () => {
   assert.deepEqual(parseSystemdActive('active\n'), { active: true })
@@ -465,6 +599,16 @@ test('service-check: systemd 状态解析', () => {
 test('service-check: 端口探测对明显不可达地址快速失败', async () => {
   const err = await tcpCheck('127.0.0.1', 1, 1500)
   assert.ok(err !== null)
+})
+
+test('service-check: 远端服务名 shell 转义不会拼接命令', () => {
+  const quoted = shellQuote('nginx; echo injected')
+  assert.equal(quoted, "'nginx; echo injected'")
+  assert.ok(!quoted.includes('; echo injected\' &&'))
+})
+
+test('ssh: 服务过滤条件 shell 转义不会拼接命令', () => {
+  assert.equal(shellQuoteArg("nginx'; echo injected"), "'nginx'\\''; echo injected'")
 })
 
 // —— AI 供应商预设 ——
@@ -483,5 +627,214 @@ test('ai: 供应商预设覆盖主流大模型 + 本地 Ollama', () => {
   for (const p of AI_PROVIDERS) {
     assert.ok(p.baseUrl.startsWith('http'))
     assert.ok(p.models.length > 0)
+  }
+})
+
+// —— 资产录入：服务端校验与探测端口持久化 ——
+test('assets: 录入校验覆盖主机、端口、类型与标签边界', async () => {
+  const { validateAssetInput } = await import('../services/assetValidationService')
+  const cases: Array<{ name: string; input: Record<string, unknown>; expected: string | null }> = [
+    { name: 'IPv4 主机', input: { name: 'web-01', host: '10.0.1.12', type: 'server' }, expected: null },
+    { name: '域名主机', input: { name: 'api', host: 'api.example.com', type: 'middleware' }, expected: null },
+    { name: 'localhost 主机', input: { name: '本机', host: 'localhost', type: 'server' }, expected: null },
+    { name: 'IPv6 主机', input: { name: 'ipv6', host: '2001:db8::1', type: 'server' }, expected: null },
+    { name: '空名称', input: { name: ' ', host: '10.0.1.12', type: 'server' }, expected: '名称为必填项' },
+    { name: '命令注入式主机', input: { name: 'bad', host: '10.0.1.12; calc', type: 'server' }, expected: '主机地址格式不正确' },
+    { name: '端口为零', input: { name: 'bad', host: '10.0.1.12', port: 0, type: 'server' }, expected: '端口必须是 1 到 65535 之间的整数' },
+    { name: '端口超范围', input: { name: 'bad', host: '10.0.1.12', port: 65536, type: 'server' }, expected: '端口必须是 1 到 65535 之间的整数' },
+    { name: '非法资产类型', input: { name: 'bad', host: '10.0.1.12', type: 'vm' }, expected: '资产类型不正确' },
+    { name: '标签不是字符串数组', input: { name: 'bad', host: '10.0.1.12', tags: '生产', type: 'server' }, expected: '标签必须是字符串数组' },
+  ]
+
+  for (const item of cases) {
+    assert.equal(validateAssetInput(item.input, true), item.expected, item.name)
+  }
+})
+
+test('assets: 创建资产会保留合法探测端口', async () => {
+  const { assetService } = await import('../services/assetService')
+  const id = 'asset-port-persist-test'
+  try {
+    const created = assetService.create({
+      id,
+      name: 'port-persist',
+      type: 'server',
+      host: '127.0.0.1',
+      port: 2222,
+      source: 'manual',
+      tags: [],
+    })
+    assert.equal(created.port, 2222)
+  } finally {
+    assetService.remove(id)
+  }
+})
+
+// —— 联动回归：检索相关度 / 网络零速率告警 / 工具箱同步 ——
+test('knowledge: 用户内容命中不应压过内置标题高相关结果', async () => {
+  const { knowledgeService } = await import('../services/knowledgeService')
+  const { memoryStore } = await import('../store/memoryStore')
+  const id = 'knowledge-ranking-regression'
+  memoryStore.addKnowledge({
+    id,
+    title: '运维经验记录',
+    content: '磁盘问题曾在一次发布中出现',
+    source: 'manual',
+    tags: [],
+    relatedAssets: [],
+  })
+  try {
+    const hits = knowledgeService.search('磁盘')
+    assert.ok(hits.length > 1)
+    assert.notEqual(hits[0].id, id)
+  } finally {
+    memoryStore.removeKnowledge(id)
+  }
+})
+
+test('alert-rules: 网络速率为 0 时仍应参与等于阈值的告警评估', async () => {
+  const { memoryStore } = await import('../store/memoryStore')
+  const { setLatest } = await import('../services/hostMetricsCache')
+  const { alertRuleService, resetAlertCooldown } = await import('../services/alertRuleService')
+  const now = new Date().toISOString()
+  const assetId = 'alert-net-zero-asset'
+  const ruleId = 'alert-net-zero-rule'
+  memoryStore.addAsset({
+    id: assetId,
+    name: 'net-zero',
+    type: 'server',
+    host: '127.0.0.1',
+    source: 'manual',
+    tags: [],
+    createdAt: now,
+    healthScore: 100,
+    status: 'ok',
+    reachable: true,
+  })
+  memoryStore.addAlertRule({
+    id: ruleId,
+    name: '网络无流量',
+    enabled: true,
+    scope: 'asset',
+    assetId,
+    metric: 'netRx',
+    operator: '==',
+    threshold: 0,
+    level: 'P2',
+    createdAt: now,
+  })
+  setLatest({ assetId, collectedAt: now, status: 'ok', disk: [], network: { rxBytes: 10, txBytes: 10, rxRateKbps: 0, txRateKbps: 0 } })
+  resetAlertCooldown()
+  try {
+    assert.equal(alertRuleService.evaluateAll(), 1)
+  } finally {
+    memoryStore.removeAlertRule(ruleId)
+    memoryStore.removeAsset(assetId)
+    for (const a of memoryStore.getAlerts().filter((x) => x.assetId === assetId)) memoryStore.removeAlert(a.id)
+    resetAlertCooldown()
+  }
+})
+
+test('dolores: memory-sync 会立即刷新主存储文件', async () => {
+  const { doloresService } = await import('../services/doloresService')
+  const { flushStore } = await import('../store/memoryStore')
+  const { readJSONFile } = await import('../store/persist')
+  flushStore()
+  const storeFile = path.join(tmp, 'store.json')
+  fs.unlinkSync(storeFile)
+  assert.equal(readJSONFile('store.json'), null)
+  const run = doloresService.run('memory-sync')
+  assert.equal(run.status, 'ok')
+  assert.ok(run.logs.some((line) => line.includes('内存快照已同步')))
+  assert.ok(readJSONFile('store.json'))
+})
+
+test('patrol: Cron 匹配支持通配符、步长、周日别名与非法表达式兜底', async () => {
+  const { matchesCron } = await import('../services/patrolService')
+  const at = new Date(2026, 7, 29, 10, 15)
+  assert.equal(matchesCron('* * * * *', at), true)
+  assert.equal(matchesCron('*/5 * * * *', at), true)
+  assert.equal(matchesCron('0 10 * * *', at), false)
+  assert.equal(matchesCron('bad', at), false)
+  assert.equal(matchesCron('15 10 * * 6', at), true)
+  const sunday = new Date(2026, 7, 30, 10, 15)
+  assert.equal(matchesCron('15 10 * * 7', sunday), true)
+  assert.equal(matchesCron('15 10 1 * 6', at), true)
+})
+
+test('service-check: 输入校验拒绝非法类型、孤儿资产和越界端口', async () => {
+  const { validateServiceCheckInput } = await import('../services/serviceCheckService')
+  assert.equal(validateServiceCheckInput({ name: '端口', assetId: 'asset-localhost', checkType: 'port', serviceName: 'tcp', port: 80 }, true), null)
+  assert.ok(validateServiceCheckInput({ name: '端口', assetId: 'asset-localhost', checkType: 'port', serviceName: 'tcp', port: 0 }, true))
+  assert.ok(validateServiceCheckInput({ name: '未知', assetId: 'asset-localhost', checkType: 'bogus' as never, serviceName: 'x' }, true))
+  assert.ok(validateServiceCheckInput({ name: '服务', assetId: 'asset-localhost', checkType: 'systemd', serviceName: 'bad\nname' }, true))
+})
+
+test('patrol: 已启用任务在匹配分钟执行且同一分钟不重复执行', async () => {
+  const { memoryStore } = await import('../store/memoryStore')
+  const { patrolService } = await import('../services/patrolService')
+  const at = new Date('2026-08-29T10:15:00Z')
+  const task = patrolService.create({ id: 'scheduled-patrol-regression', name: '定时回归', cron: '* * * * *', enabled: true, layers: ['basic'] })
+  try {
+    assert.equal(patrolService.runScheduled(at), 1)
+    assert.equal(patrolService.runScheduled(new Date(at.getTime() + 20_000)), 0)
+    assert.equal(memoryStore.getPatrols().find((x) => x.id === task.id)?.history.length, 1)
+  } finally {
+    memoryStore.removePatrol(task.id)
+  }
+})
+
+test('db: 连接更新校验拒绝非法类型、端口并接受合法部分更新', async () => {
+  const { validateDbConnectionInput } = await import('../routes/db')
+  assert.equal(validateDbConnectionInput({ name: '主库', host: 'db.example.com', dbType: 'mysql', port: 3306 }), null)
+  assert.equal(validateDbConnectionInput({ port: 0 }), '端口必须是 1 到 65535 之间的整数')
+  assert.equal(validateDbConnectionInput({ dbType: 'sqlite' }), '数据库类型不正确')
+  assert.equal(validateDbConnectionInput({ name: ' ' }), '名称不能为空')
+})
+
+// —— RBAC：后端管理员边界不能仅依赖前端隐藏路由 ——
+test('auth: 个人用户不能直接访问管理员资源接口', async () => {
+  const { createServer } = await import('../index')
+  const { login, hashPassword, logout } = await import('../services/authService')
+  const { memoryStore } = await import('../store/memoryStore')
+  const personalId = 'rbac-personal-regression'
+  memoryStore.removeUser(personalId)
+  memoryStore.addUser({
+    id: personalId,
+    username: 'rbac-personal',
+    displayName: 'RBAC 回归用户',
+    role: 'personal',
+    passwordHash: hashPassword('personal123'),
+    createdAt: new Date().toISOString(),
+  })
+
+  const server = createServer()
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()))
+  const address = server.address()
+  assert.ok(address && typeof address !== 'string')
+  const base = `http://127.0.0.1:${address.port}`
+  const admin = login('admin', 'admin123')
+  const personal = login('rbac-personal', 'personal123')
+  assert.ok(admin && personal)
+
+  try {
+    const denied = await fetch(`${base}/api/assets`, {
+      headers: { 'x-ops-user-token': personal.token },
+    })
+    assert.equal(denied.status, 403)
+    const deniedJson = (await denied.json()) as { code: number }
+    assert.equal(deniedJson.code, 403)
+
+    const allowed = await fetch(`${base}/api/assets`, {
+      headers: { 'x-ops-user-token': admin.token },
+    })
+    assert.equal(allowed.status, 200)
+    const allowedJson = (await allowed.json()) as { code: number }
+    assert.equal(allowedJson.code, 0)
+  } finally {
+    logout(admin.token)
+    logout(personal.token)
+    memoryStore.removeUser(personalId)
+    await new Promise<void>((resolve) => server.close(() => resolve()))
   }
 })

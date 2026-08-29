@@ -6,6 +6,28 @@ import { connectSsh, runCommand } from './sshService'
 import { alertService } from './alertService'
 import { logger } from '../utils/logger'
 
+/** SSH 远端命令参数必须使用 shell 单引号包裹，避免服务名中的特殊字符改变命令语义。 */
+export function shellQuote(value: string): string {
+  return `'${String(value).replace(/'/g, "'\\''")}'`
+}
+
+export function validateServiceCheckInput(input: Partial<ServiceCheck>, creating = false): string | null {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return '请求数据格式不正确'
+  if (creating && (typeof input.name !== 'string' || !input.name.trim())) return '名称为必填项'
+  if (input.name !== undefined && (typeof input.name !== 'string' || !input.name.trim() || input.name.trim().length > 100)) return '名称长度需为 1 到 100 个字符'
+  if (creating && (typeof input.assetId !== 'string' || !input.assetId.trim())) return '关联资产为必填项'
+  if (input.assetId !== undefined && (typeof input.assetId !== 'string' || !input.assetId.trim())) return '关联资产不正确'
+  if (input.checkType !== undefined && !['process', 'port', 'systemd'].includes(String(input.checkType))) return '检查类型不正确'
+  if (creating && typeof input.serviceName !== 'string') return '服务名称为必填项'
+  if (input.serviceName !== undefined && (typeof input.serviceName !== 'string' || !input.serviceName.trim() || input.serviceName.length > 128 || /[\r\n]/.test(input.serviceName))) return '服务名称长度或格式不正确'
+  if (input.port !== undefined && input.port !== null && (!Number.isInteger(input.port) || Number(input.port) < 1 || Number(input.port) > 65535)) return '端口必须是 1 到 65535 之间的整数'
+  if (input.checkType === 'port' && (input.port === undefined || input.port === null)) return '端口检查必须指定端口号'
+  for (const key of ['expectAlive', 'autoHeal', 'enabled'] as const) {
+    if (input[key] !== undefined && typeof input[key] !== 'boolean') return `${key} 必须是布尔值`
+  }
+  return null
+}
+
 /** TCP 端口连通检测（3s 超时），返回 null=可连通，否则为失败原因 */
 export function tcpCheck(host: string, port: number, timeoutMs = 3000): Promise<string | null> {
   return new Promise((resolve) => {
@@ -48,6 +70,8 @@ export async function runCheck(check: ServiceCheck): Promise<ServiceCheck> {
   let result: ServiceCheckResult
 
   try {
+    const validationError = validateServiceCheckInput(check)
+    if (validationError) throw new Error(validationError)
     if (!asset) throw new Error('关联资产不存在或已被删除')
 
     if (check.checkType === 'port') {
@@ -64,7 +88,7 @@ export async function runCheck(check: ServiceCheck): Promise<ServiceCheck> {
       const client = await connectSsh(params)
       try {
         if (check.checkType === 'systemd') {
-          const out = await runCommand(client, `systemctl is-active ${JSON.stringify(check.serviceName).replace(/"/g, '')} 2>&1 || true`)
+          const out = await runCommand(client, `systemctl is-active ${shellQuote(check.serviceName)} 2>&1 || true`)
           const { active } = parseSystemdActive(out)
           result = {
             alive: active,
@@ -73,7 +97,7 @@ export async function runCheck(check: ServiceCheck): Promise<ServiceCheck> {
           }
         } else {
           // 进程存活：pgrep 精确匹配进程名
-          const out = await runCommand(client, `pgrep -x ${JSON.stringify(check.serviceName).replace(/"/g, '')} 2>&1 || true`)
+          const out = await runCommand(client, `pgrep -x ${shellQuote(check.serviceName)} 2>&1 || true`)
           const pids = out.trim().split('\n').filter((l) => /^\d+$/.test(l.trim()))
           result = {
             alive: pids.length > 0,
@@ -98,9 +122,9 @@ export async function runCheck(check: ServiceCheck): Promise<ServiceCheck> {
     try {
       const client = await connectSsh(assetSshParams(asset))
       try {
-        await runCommand(client, `sudo systemctl restart ${JSON.stringify(check.serviceName).replace(/"/g, '')} 2>&1 || systemctl restart ${JSON.stringify(check.serviceName).replace(/"/g, '')} 2>&1 || true`)
+        await runCommand(client, `sudo systemctl restart ${shellQuote(check.serviceName)} 2>&1 || systemctl restart ${shellQuote(check.serviceName)} 2>&1 || true`)
         // 重启后复查一次
-        const out = await runCommand(client, `systemctl is-active ${JSON.stringify(check.serviceName).replace(/"/g, '')} 2>&1 || true`)
+        const out = await runCommand(client, `systemctl is-active ${shellQuote(check.serviceName)} 2>&1 || true`)
         const { active } = parseSystemdActive(out)
         result = {
           ...result,

@@ -26,6 +26,7 @@ import { useTheme, type Theme } from '@mui/material/styles'
 import {
   Add as IconAdd,
   Delete as IconDelete,
+  Edit as IconEdit,
   MonitorHeart as IconHealth,
   Refresh as IconRefresh,
   SmartToy as IconAi,
@@ -63,6 +64,7 @@ export default function Databases() {
   const [healthOpen, setHealthOpen] = useState(false)
   const [aiCtx, setAiCtx] = useState<{ title: string; payload: Record<string, unknown> } | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
 
   const [form, setForm] = useState<{
     name: string
@@ -103,12 +105,26 @@ export default function Databases() {
   }
 
   async function onDelete(id: string) {
+    const target = conns.find((c) => c.id === id)
+    if (!target || !window.confirm(`确认删除数据库连接“${target.name}”？此操作不可撤销。`)) return
     try {
       await api.db.remove(id)
       await load()
     } catch (e) {
       setError((e as Error).message)
     }
+  }
+
+  function openCreate() {
+    setEditingId(null)
+    setForm({ name: '', dbType: 'mysql', host: '', port: 3306, database: '', username: '', password: '' })
+    setOpen(true)
+  }
+
+  function openEdit(conn: DbConnection) {
+    setEditingId(conn.id)
+    setForm({ name: conn.name, dbType: conn.dbType, host: conn.host, port: conn.port, database: conn.database || '', username: conn.username || '', password: '' })
+    setOpen(true)
   }
 
   function onTypeChange(t: DbType) {
@@ -119,7 +135,9 @@ export default function Databases() {
     setSubmitting(true)
     setError(null)
     try {
-      let credentialId: string | undefined
+      let credentialId: string | undefined = editingId
+        ? conns.find((c) => c.id === editingId)?.credentialId
+        : undefined
       if (form.password) {
         const cred = await api.credentials.create({
           name: `${form.name} 凭据`,
@@ -131,7 +149,7 @@ export default function Databases() {
         })
         credentialId = cred.id
       }
-      await api.db.create({
+      const payload = {
         name: form.name,
         dbType: form.dbType,
         host: form.host,
@@ -139,8 +157,11 @@ export default function Databases() {
         database: form.database || undefined,
         username: form.username || undefined,
         credentialId,
-      })
+      }
+      if (editingId) await api.db.update(editingId, payload)
+      else await api.db.create(payload)
       setOpen(false)
+      setEditingId(null)
       setForm({ name: '', dbType: 'mysql', host: '', port: 3306, database: '', username: '', password: '' })
       await load()
     } catch (e) {
@@ -165,7 +186,7 @@ export default function Databases() {
           <Button startIcon={<IconRefresh />} onClick={() => void load()} color="inherit">
             刷新
           </Button>
-          <Button variant="contained" startIcon={<IconAdd />} onClick={() => setOpen(true)}>
+          <Button variant="contained" startIcon={<IconAdd />} onClick={openCreate}>
             添加连接
           </Button>
         </Stack>
@@ -219,6 +240,11 @@ export default function Databases() {
                         <IconHealth fontSize="small" />
                       </IconButton>
                     </Tooltip>
+                    <Tooltip title="编辑连接">
+                      <IconButton size="small" onClick={() => openEdit(c)}>
+                        <IconEdit fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
                     <Tooltip title="删除">
                       <IconButton size="small" onClick={() => void onDelete(c.id)}>
                         <IconDelete fontSize="small" />
@@ -234,7 +260,7 @@ export default function Databases() {
 
       {/* 添加连接 */}
       <Dialog open={open} onClose={() => setOpen(false)} maxWidth="xs" fullWidth>
-        <DialogTitle>添加数据库连接</DialogTitle>
+        <DialogTitle>{editingId ? '编辑数据库连接' : '添加数据库连接'}</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
             <TextField
@@ -280,7 +306,7 @@ export default function Databases() {
               onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))}
             />
             <TextField
-              label="密码"
+              label={editingId ? '密码（留空保持原凭据）' : '密码'}
               type="password"
               fullWidth
               value={form.password}
@@ -290,8 +316,8 @@ export default function Databases() {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setOpen(false)}>取消</Button>
-          <Button variant="contained" disabled={submitting || !form.name || !form.host} onClick={() => void onSubmit()}>
-            保存
+          <Button variant="contained" disabled={submitting || !form.name.trim() || !form.host.trim()} onClick={() => void onSubmit()}>
+            {submitting ? '保存中…' : '保存'}
           </Button>
         </DialogActions>
       </Dialog>

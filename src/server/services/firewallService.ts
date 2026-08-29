@@ -247,20 +247,25 @@ export function validateRuleInput(input: AddFirewallRuleInput): string | null {
 
 /** 构建 iptables 添加规则命令。 */
 export function buildRuleCommand(input: AddFirewallRuleInput): string {
-  const parts = [`-A ${input.chain}`]
-  if (input.inInterface) parts.push(`-i ${input.inInterface}`)
-  if (input.protocol && input.protocol !== 'all') parts.push(`-p ${input.protocol}`)
-  if (input.source) parts.push(`-s ${input.source}`)
-  if (input.destination) parts.push(`-d ${input.destination}`)
+  const shellArg = (value: string): string => {
+    // 保持常规 iptables 参数可读；含空格/元字符时单引号转义，阻断远端 shell 注入。
+    if (/^[A-Za-z0-9_./:%+,=-]+$/.test(value)) return value
+    return `'${value.replace(/'/g, "'\\''")}'`
+  }
+  const parts = [`-A ${shellArg(input.chain)}`]
+  if (input.inInterface) parts.push(`-i ${shellArg(input.inInterface)}`)
+  if (input.protocol && input.protocol !== 'all') parts.push(`-p ${shellArg(input.protocol)}`)
+  if (input.source) parts.push(`-s ${shellArg(input.source)}`)
+  if (input.destination) parts.push(`-d ${shellArg(input.destination)}`)
   if (input.port) {
     if (input.protocol === 'tcp' || input.protocol === 'udp') {
-      parts.push(`-m ${input.protocol} --dport ${input.port}`)
+      parts.push(`-m ${shellArg(input.protocol)} --dport ${shellArg(input.port)}`)
     } else {
-      parts.push(`--dport ${input.port}`)
+      parts.push(`--dport ${shellArg(input.port)}`)
     }
   }
-  parts.push(`-j ${input.action}`)
-  if (input.comment) parts.push(`-m comment --comment "${input.comment.replace(/"/g, '')}"`)
+  parts.push(`-j ${shellArg(input.action)}`)
+  if (input.comment) parts.push(`-m comment --comment ${shellArg(input.comment)}`)
   return parts.join(' ')
 }
 
@@ -291,6 +296,8 @@ export async function deleteFirewallRule(
   raw: string
 ): Promise<{ ok: boolean; message: string }> {
   if (!raw || !raw.startsWith('-A ')) return { ok: false, message: '无效的规则（缺少 -A 前缀）' }
+  // raw 来自客户端，禁止换行、命令替换、管道、分号等 shell 控制字符。
+  if (!/^[A-Za-z0-9_./:%+,=\-!" ]+$/.test(raw)) return { ok: false, message: '无效的规则（包含不安全字符）' }
   const client = await connectSsh(params)
   try {
     const cmd = raw.replace(/^-A /, '-D ')

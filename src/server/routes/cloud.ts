@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { asyncHandler, ok, fail } from '../utils/response'
-import { requireUser } from '../services/authService'
+import { requireUser, requireAdmin } from '../services/authService'
 import { memoryStore } from '../store/memoryStore'
 import { diffResources, listResources } from '../services/cloudService'
 import { logger } from '../utils/logger'
@@ -12,11 +12,11 @@ function genId(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
 }
 
-cloudRouter.get('/', requireUser, asyncHandler(async (_req, res) => {
+cloudRouter.get('/', requireUser, requireAdmin, asyncHandler(async (_req, res) => {
   ok(res, memoryStore.getCloudAccounts())
 }))
 
-cloudRouter.post('/', requireUser, asyncHandler(async (req, res) => {
+cloudRouter.post('/', requireUser, requireAdmin, asyncHandler(async (req, res) => {
   const b = req.body as Partial<CloudAccount>
   if (!b?.name || !b?.provider) return fail(res, 400, 'name/provider 必填')
   const acc: CloudAccount = {
@@ -30,7 +30,7 @@ cloudRouter.post('/', requireUser, asyncHandler(async (req, res) => {
   ok(res, memoryStore.addCloudAccount(acc))
 }))
 
-cloudRouter.get('/:id/resources', requireUser, asyncHandler(async (req, res) => {
+cloudRouter.get('/:id/resources', requireUser, requireAdmin, asyncHandler(async (req, res) => {
   const acc = memoryStore.getCloudAccounts().find((a) => a.id === req.params.id)
   if (!acc) return fail(res, 404, 'account not found')
   try {
@@ -49,22 +49,22 @@ cloudRouter.get('/:id/resources', requireUser, asyncHandler(async (req, res) => 
 }))
 
 // 变更日志（时间倒序，可选按账号过滤）
-cloudRouter.get('/:id/changes', requireUser, asyncHandler(async (req, res) => {
+cloudRouter.get('/:id/changes', requireUser, requireAdmin, asyncHandler(async (req, res) => {
   ok(res, memoryStore.getCloudChanges(req.params.id))
 }))
 
 // 全量变更日志（跨账号）
-cloudRouter.get('/changes/all', requireUser, asyncHandler(async (_req, res) => {
+cloudRouter.get('/changes/all', requireUser, requireAdmin, asyncHandler(async (_req, res) => {
   ok(res, memoryStore.getCloudChanges())
 }))
 
-cloudRouter.delete('/:id', requireUser, asyncHandler(async (req, res) => {
+cloudRouter.delete('/:id', requireUser, requireAdmin, asyncHandler(async (req, res) => {
   const removed = memoryStore.removeCloudAccount(req.params.id)
   if (!removed) return fail(res, 404, 'account not found')
   ok(res, { ok: true })
 }))
 
-cloudRouter.put('/:id', requireUser, asyncHandler(async (req, res) => {
+cloudRouter.put('/:id', requireUser, requireAdmin, asyncHandler(async (req, res) => {
   const b = req.body as Partial<CloudAccount>
   const updated = memoryStore.updateCloudAccount(req.params.id, {
     name: b.name,

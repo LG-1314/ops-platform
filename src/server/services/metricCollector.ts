@@ -4,6 +4,7 @@ import { collectMetrics } from './sshService'
 import { checkHealth } from './dbService'
 import { detail as clusterDetail } from './k8sService'
 import { pushHealth } from '../store/healthHistoryStore'
+import { markAssetCollectionSuccess, markAssetConnectionFailure } from './assetHealthService'
 
 // 后台周期采集器：遍历「关联了 SSH 凭据」的资产，采集指标并写入最新缓存 + 时序；
 // 同时周期采集数据库连接健康与 K8s 集群健康（健康时序）。并发受限、单资产失败不影响整体。
@@ -19,16 +20,22 @@ export async function collectAsset(assetId: string): Promise<void> {
   if (!asset || !asset.credentialId) return
   const secret = credentialService.decrypt(asset.credentialId)
   if (!secret) return
-  await collectMetrics(
-    {
-      host: asset.host,
-      port: asset.port,
-      username: secret.username,
-      password: secret.password,
-      privateKey: secret.privateKey,
-    },
-    asset.id
-  )
+  try {
+    const sample = await collectMetrics(
+      {
+        host: asset.host,
+        port: asset.port,
+        username: secret.username,
+        password: secret.password,
+        privateKey: secret.privateKey,
+      },
+      asset.id
+    )
+    markAssetCollectionSuccess(asset.id, sample)
+  } catch (e) {
+    markAssetConnectionFailure(asset.id, e instanceof Error ? e.message : '指标采集失败')
+    throw e
+  }
 }
 
 async function collectAll(): Promise<void> {

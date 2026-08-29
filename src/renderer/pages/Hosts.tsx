@@ -51,6 +51,18 @@ function statusColor(theme: Theme, s: Status): string {
   return theme.palette.text.secondary
 }
 
+function assetDisplayStatus(host: Asset): { status: Status; label: string; reason?: string } {
+  if (host.reachable === false) {
+    return { status: 'error', label: '离线', reason: host.statusReason || '设备离线/未采集数据' }
+  }
+  if (host.reachable !== true) {
+    return { status: 'unknown', label: '未探测', reason: host.statusReason }
+  }
+  if (host.status === 'error') return { status: 'error', label: '连接失败', reason: host.statusReason }
+  if (host.status === 'warn') return { status: 'warn', label: '在线异常', reason: host.statusReason }
+  return { status: 'ok', label: '在线', reason: host.statusReason }
+}
+
 function MetricBar({ label, pct, theme }: { label: string; pct: number; theme: Theme }) {
   const color = pct >= 90 ? theme.palette.error.main : pct >= 75 ? theme.palette.warning.main : theme.palette.success.main
   return (
@@ -327,8 +339,9 @@ export default function Hosts() {
               )}
               {hosts.map((h) => {
                 const m = metricMap.get(h.id)
+                const displayStatus = assetDisplayStatus(h)
                 return (
-                  <TableRow key={h.id}>
+                  <TableRow key={h.id} sx={{ opacity: h.reachable === false ? 0.68 : 1 }}>
                     <TableCell sx={{ fontWeight: 600 }}>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                         <IconHost fontSize="small" sx={{ color: theme.palette.primary.main }} />
@@ -351,7 +364,11 @@ export default function Hosts() {
                     </TableCell>
                     <TableCell>{h.credentialId ? '已关联' : '无'}</TableCell>
                     <TableCell>
-                      <StatusBadgeInline s={h.reachable ? 'ok' : h.reachable === false ? 'error' : 'unknown'} label={h.reachable ? '在线' : h.reachable === false ? '离线' : '未探测'} theme={theme} />
+                      <Tooltip title={displayStatus.reason || ''}>
+                        <span>
+                          <StatusBadgeInline s={displayStatus.status} label={displayStatus.label} theme={theme} />
+                        </span>
+                      </Tooltip>
                     </TableCell>
                     <TableCell align="right">
                       <Tooltip title="AI 诊断建议">

@@ -3,8 +3,25 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import fs from 'node:fs'
 import http from 'node:http'
-import { createServer, startBackgroundJobs, stopBackgroundJobs } from '../server/index'
-import { authHeaders, getToken } from '../server/auth'
+
+type ServerModule = typeof import('../server/index')
+type AuthModule = typeof import('../server/auth')
+let createServer: ServerModule['createServer'] | null = null
+let startBackgroundJobs: ServerModule['startBackgroundJobs'] | null = null
+let stopBackgroundJobs: ServerModule['stopBackgroundJobs'] | null = null
+let authHeaders: AuthModule['authHeaders'] | null = null
+let getToken: AuthModule['getToken'] | null = null
+
+/** 在 OPS_DATA_DIR 确定后再加载服务模块，避免持久化数据目录在启动阶段分裂。 */
+async function loadServerModules(): Promise<void> {
+  if (createServer && authHeaders && getToken) return
+  const [serverModule, authModule] = await Promise.all([import('../server/index'), import('../server/auth')])
+  createServer = serverModule.createServer
+  startBackgroundJobs = serverModule.startBackgroundJobs
+  stopBackgroundJobs = serverModule.stopBackgroundJobs
+  authHeaders = authModule.authHeaders
+  getToken = authModule.getToken
+}
 
 // Electron 仅作壳：启动 Express 能力总线（提供 /api 能力），
 // 渲染进程经自定义协议 app:// 直接由主进程从 resources/app-dist 读取前端产物，
@@ -25,6 +42,24 @@ app.commandLine.appendSwitch('no-sandbox')
 app.commandLine.appendSwitch('disable-gpu-sandbox')
 // 共享内存 /dev/shm 过小也会导致渲染进程崩溃，禁用之改用堆内存兜底
 app.commandLine.appendSwitch('disable-dev-shm-usage')
+// Windows 任务栏分组与 exe 图标绑定，必须尽早设置
+app.setAppUserModelId('com.opsplatform.desktop')
+
+function resolveAppIcon(): string | undefined {
+  const candidates = [
+    path.join(process.resourcesPath, 'icon.ico'),
+    path.join(__dirname, '..', '..', 'build', 'icon.ico'),
+    path.join(process.cwd(), 'build', 'icon.ico'),
+  ]
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p)) return p
+    } catch {
+      /* ignore */
+    }
+  }
+  return undefined
+}
 
 // 把 app:// 注册为特权标准协议，使 Chromium 像对待 https/http 一样处理它：
 // 支持 fetch、service worker、ES Module、same-origin 等。
@@ -101,7 +136,7 @@ function forwardRequest(
 ): Promise<{ statusCode: number; body: unknown }> {
   return new Promise((resolve, reject) => {
     const data = body != null ? JSON.stringify(body) : undefined
-    const headers: Record<string, string> = { 'Content-Type': 'application/json', Accept: 'application/json', ...authHeaders() }
+    const headers: Record<string, string> = { 'Content-Type': 'application/json', Accept: 'application/json', ...(authHeaders ? authHeaders() : {}) }
     if (userToken) headers['x-ops-user-token'] = userToken
     const req = http.request(
       {
@@ -150,7 +185,7 @@ ipcMain.handle('ops-api', async (_e, arg: { method: string; path: string; body?:
 })
 
 // 渲染进程取回能力总线令牌（用于终端 WebSocket 鉴权），不落盘、不对外暴露明文凭据。
-ipcMain.handle('ops-auth-token', () => getToken())
+ipcMain.handle('ops-auth-token', () => (getToken ? getToken() : ''))
 
 // 渲染进程运行时错误（经 preload 转发），独立落盘便于定位"无声黑屏"
 ipcMain.on('renderer-error', (_e, info: { kind: string; msg: string }) => {
@@ -230,7 +265,7 @@ if (!app.requestSingleInstanceLock()) {
                 path: `${rel}${url.search || ''}`,
                 method,
                 timeout: 60000,
-                headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...authHeaders() },
+                headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...(authHeaders ? authHeaders() : {}) },
               },
               (res) => {
                 const chunks: Buffer[] = []
@@ -309,6 +344,7 @@ if (!app.requestSingleInstanceLock()) {
       show: false,
       title: '运维全维度管理平台',
       backgroundColor: '#0B0E14',
+      icon: resolveAppIcon(),
       webPreferences: {
         preload: path.join(__dirname, 'preload.js'),
         contextIsolation: true,
@@ -462,6 +498,7 @@ if (!app.requestSingleInstanceLock()) {
   // 健壮性：① server.listen 可能同步抛错（某些平台），用 try/catch 转 reject；
   // ② finish() 防双触发；③ 失败后 close 该 server 防句柄泄漏。
   async function tryStartServer(): Promise<{ server: http.Server; port: number }> {
+    if (!createServer || !startBackgroundJobs) throw new Error('能力总线模块尚未加载')
     for (let offset = 0; offset < 10; offset += 1) {
       const port = BASE_PORT + offset
       const server = createServer()
@@ -524,7 +561,7 @@ if (!app.requestSingleInstanceLock()) {
 
       // 停止后台定时任务（监控扫描、告警规则引擎）
       try {
-        stopBackgroundJobs()
+        stopBackgroundJobs?.()
       } catch {
         /* ignore */
       }
@@ -679,6 +716,13 @@ if (!app.requestSingleInstanceLock()) {
       process.env.OPS_DATA_DIR = app.getPath('userData')
     } catch {
       /* ignore */
+    }
+
+    try {
+      await loadServerModules()
+    } catch (e) {
+      showFatal('能力模块加载失败', e)
+      return
     }
 
     // 注册 app:// 协议，必须在创建 BrowserWindow 之前完成

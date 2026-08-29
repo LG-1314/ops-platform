@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
-import { memoryStore } from '../store/memoryStore'
+import { memoryStore, flushStore } from '../store/memoryStore'
 import { metricSeriesStore } from '../store/metricSeriesStore'
 import type { DoloresRun, DoloresTool, Status } from '@shared/types'
 
@@ -165,10 +165,11 @@ export const doloresService = {
         // 持久化内存数据到磁盘 store.json + metrics.json
         let saved = 0
         try {
-          // 调用 schedulePersist 由 memoryStore 自动触发
+          flushStore()
           saved += 1
+          logs.push('内存数据已持久化到 store.json。')
         } catch {
-          // ignore
+          logs.push('内存数据持久化失败，跳过。')
         }
         try {
           metricSeriesStore.flushSeries()

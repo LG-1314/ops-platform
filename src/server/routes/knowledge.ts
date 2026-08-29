@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { requireUser } from '../services/authService'
+import { requireUser, requireAdmin } from '../services/authService'
 import { asyncHandler, ok, fail } from '../utils/response'
 import { knowledgeService } from '../services/knowledgeService'
 import type { KnowledgeHit } from '@shared/types'
@@ -7,7 +7,7 @@ import type { KnowledgeHit } from '@shared/types'
 export const knowledgeRouter = Router()
 
 // 用户级鉴权：所有路由需携带有效会话 token（与 users/cloud/ai 等路由一致）
-knowledgeRouter.use(requireUser)
+knowledgeRouter.use(requireUser, requireAdmin)
 
 // 内置 FAQ 检索
 knowledgeRouter.get('/search', asyncHandler(async (req, res) => {

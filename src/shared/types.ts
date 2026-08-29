@@ -64,10 +64,17 @@ export interface Asset {
   credentialId?: string // SSH/监控凭据关联（主机经 SSH 采集指标、启动终端时使用）
   healthScore: number // 0-100
   status: Status
+  statusReason?: string // 最近一次异常原因（采集超时/端口不通/凭据失效等）
   reachable?: boolean // 最近一次存活探测结果（true=在线）
   latencyMs?: number // 最近一次探测往返延迟（ms）
   lastCheckAt?: string // 最近一次探测时间（ISO）
   lastScanAt?: string
+}
+
+export interface AssetConnectionTestResult {
+  reachable: boolean
+  latencyMs?: number
+  checkedAt: string
 }
 
 // —— 知识检索 / 关联 ——

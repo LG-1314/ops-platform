@@ -67,6 +67,21 @@ function hostScoreAvailable(h: MonitorSummary['hosts'][number]): boolean {
   return h.reachable === true && h.healthScore != null
 }
 
+function hostStatusLabel(h: MonitorSummary['hosts'][number]): string {
+  if (h.reachable === false) return '离线'
+  if (h.reachable !== true) return '未探测'
+  if (h.status === 'error') return '连接失败'
+  if (h.status === 'warn') return '在线异常'
+  return '在线'
+}
+
+function hostStatusColor(h: MonitorSummary['hosts'][number], theme: Theme): string {
+  if (h.reachable === false || h.status === 'error') return theme.palette.error.main
+  if (h.status === 'warn') return theme.palette.warning.main
+  if (h.reachable === true) return theme.palette.success.main
+  return theme.palette.text.disabled
+}
+
 export default function Monitor() {
   const theme = useTheme()
   const [summary, setSummary] = useState<MonitorSummary | null>(null)
@@ -95,12 +110,14 @@ export default function Monitor() {
     () => summary?.hosts.filter((h) => h.reachable).length ?? 0,
     [summary]
   )
-  // 平均健康分：仅统计"在线且已评分"的主机；全部离线/未探测时显示 '—'
-  const avgHealth = useMemo(() => {
-    const scored = summary?.hosts.filter(hostScoreAvailable) ?? []
-    if (scored.length === 0) return null
-    return Math.round(scored.reduce((a, h) => a + (h.healthScore ?? 0), 0) / scored.length)
-  }, [summary])
+  const offlineCount = useMemo(
+    () => summary?.hosts.filter((h) => h.reachable === false).length ?? 0,
+    [summary]
+  )
+  const abnormalCount = useMemo(
+    () => summary?.hosts.filter((h) => h.reachable === true && h.status !== 'ok').length ?? 0,
+    [summary]
+  )
 
   // 直接复用 summary.hosts（无需克隆，避免字段增删不同步）；
   // 用模块级空数组常量，避免 `?? []` 每次渲染生成新引用导致 sortedHosts useMemo 失效
@@ -175,9 +192,9 @@ export default function Monitor() {
                   <Stack direction="row" alignItems="center" spacing={1}>
                     <IconMonitor sx={{ color: theme.palette.primary.main, fontSize: 20 }} />
                     <Box>
-                      <Typography variant="caption" color="text.secondary">平均健康分</Typography>
-                      <Typography variant="h6" sx={{ fontWeight: 700, lineHeight: 1.2, color: avgHealth == null ? theme.palette.text.disabled : theme.palette.success.main }}>
-                        {avgHealth ?? '—'}
+                      <Typography variant="caption" color="text.secondary">离线主机</Typography>
+                      <Typography variant="h6" sx={{ fontWeight: 700, lineHeight: 1.2, color: offlineCount > 0 ? theme.palette.error.main : theme.palette.success.main }}>
+                        {offlineCount}
                       </Typography>
                     </Box>
                   </Stack>
@@ -188,11 +205,11 @@ export default function Monitor() {
               <Card>
                 <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
                   <Stack direction="row" alignItems="center" spacing={1}>
-                    <IconMonitor sx={{ color: summary.activeAlerts > 0 ? theme.palette.error.main : theme.palette.success.main, fontSize: 20 }} />
+                    <IconMonitor sx={{ color: abnormalCount > 0 ? theme.palette.warning.main : theme.palette.success.main, fontSize: 20 }} />
                     <Box>
-                      <Typography variant="caption" color="text.secondary">活跃告警</Typography>
-                      <Typography variant="h6" sx={{ fontWeight: 700, lineHeight: 1.2, color: summary.activeAlerts > 0 ? theme.palette.error.main : theme.palette.success.main }}>
-                        {summary.activeAlerts}
+                      <Typography variant="caption" color="text.secondary">异常主机</Typography>
+                      <Typography variant="h6" sx={{ fontWeight: 700, lineHeight: 1.2, color: abnormalCount > 0 ? theme.palette.warning.main : theme.palette.success.main }}>
+                        {abnormalCount}
                       </Typography>
                     </Box>
                   </Stack>
@@ -206,6 +223,12 @@ export default function Monitor() {
             <IconMonitor fontSize="small" sx={{ color: theme.palette.primary.main }} />
             服务器实时监控
             <Chip size="small" label={`${sortedHosts.length} 台`} variant="outlined" />
+            <Chip
+              size="small"
+              label={`活跃告警 ${summary.activeAlerts}`}
+              color={summary.activeAlerts > 0 ? 'error' : 'success'}
+              variant="outlined"
+            />
           </Typography>
 
           {sortedHosts.length === 0 ? (
@@ -216,7 +239,11 @@ export default function Monitor() {
             <Grid container spacing={2} mb={3}>
               {sortedHosts.map((h) => (
                 <Grid item xs={12} sm={6} lg={4} xl={3} key={h.id}>
-                  <Card sx={{ '&:hover': { borderColor: theme.palette.primary.main } }}>
+                  <Card sx={{
+                    opacity: h.reachable === false ? 0.68 : 1,
+                    filter: h.reachable === false ? 'grayscale(0.35)' : 'none',
+                    '&:hover': { borderColor: h.reachable === false ? theme.palette.divider : theme.palette.primary.main },
+                  }}>
                     <CardContent>
                       {/* 主机头部：名称 + 状态 + 健康环 */}
                       <Stack direction="row" justifyContent="space-between" alignItems="center" mb={1.5}>
@@ -234,17 +261,19 @@ export default function Monitor() {
 
                       {/* 在线状态 + 延迟 + 最后检查 */}
                       <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1.5 }}>
-                        <Chip
-                          size="small"
-                          icon={h.reachable ? <CheckCircle sx={{ fontSize: 14 }} /> : h.reachable === false ? <ErrorIcon sx={{ fontSize: 14 }} /> : <HelpOutline sx={{ fontSize: 14 }} />}
-                          label={h.reachable ? '在线' : h.reachable === false ? '离线' : '未探测'}
-                          sx={{
-                            height: 22,
-                            fontSize: 11,
-                            bgcolor: h.reachable ? `${theme.palette.success.main}22` : h.reachable === false ? `${theme.palette.error.main}22` : `${theme.palette.text.disabled}22`,
-                            color: h.reachable ? theme.palette.success.main : h.reachable === false ? theme.palette.error.main : theme.palette.text.disabled,
-                          }}
-                        />
+                        <Tooltip title={h.statusReason || (h.reachable === false ? '设备离线/未采集数据' : '')}>
+                          <Chip
+                            size="small"
+                            icon={h.reachable === true && h.status === 'ok' ? <CheckCircle sx={{ fontSize: 14 }} /> : h.reachable === false || h.status === 'error' ? <ErrorIcon sx={{ fontSize: 14 }} /> : <HelpOutline sx={{ fontSize: 14 }} />}
+                            label={hostStatusLabel(h)}
+                            sx={{
+                              height: 22,
+                              fontSize: 11,
+                              bgcolor: `${hostStatusColor(h, theme)}22`,
+                              color: hostStatusColor(h, theme),
+                            }}
+                          />
+                        </Tooltip>
                         {h.latencyMs != null && (
                           <Typography variant="caption" color="text.secondary" sx={{ fontFamily: 'monospace' }}>
                             {h.latencyMs}ms
@@ -290,7 +319,7 @@ export default function Monitor() {
                         </Tooltip>
                         <Tooltip title="趋势（页内打开）">
                           <IconButton size="small" onClick={() => {
-                            setTrendAsset({ id: h.id, name: h.name, host: h.host ?? '', type: 'server', source: 'ssh', tags: [], createdAt: '', healthScore: h.healthScore ?? 0, status: h.status, reachable: h.reachable, latencyMs: h.latencyMs, lastCheckAt: h.lastCheckAt } as Asset)
+                            setTrendAsset({ id: h.id, name: h.name, host: h.host ?? '', type: 'server', source: 'ssh', tags: [], createdAt: '', healthScore: h.healthScore ?? 0, status: h.status, statusReason: h.statusReason, reachable: h.reachable, latencyMs: h.latencyMs, lastCheckAt: h.lastCheckAt } as Asset)
                           }}>
                             <IconTrend fontSize="small" />
                           </IconButton>

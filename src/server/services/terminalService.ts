@@ -16,8 +16,10 @@ export function attachTerminal(wss: WebSocketServer): void {
     const host = q.get('host') || ''
     const port = q.get('port') ? Number(q.get('port')) : undefined
     const credentialId = q.get('credentialId') || undefined
-    const cols = q.get('cols') ? Number(q.get('cols')) : 80
-    const rows = q.get('rows') ? Number(q.get('rows')) : 24
+    const requestedCols = q.get('cols') ? Number(q.get('cols')) : 80
+    const requestedRows = q.get('rows') ? Number(q.get('rows')) : 24
+    const cols = Number.isInteger(requestedCols) ? Math.max(1, Math.min(500, requestedCols)) : 80
+    const rows = Number.isInteger(requestedRows) ? Math.max(1, Math.min(500, requestedRows)) : 24
     // 用户会话（verifyClient 已校验非空，这里仅取用户名用于审计）
     const user = currentUser(q.get('ut') || '')
     const username = user?.username || 'unknown'
@@ -93,7 +95,11 @@ export function attachTerminal(wss: WebSocketServer): void {
               try {
                 const parsed = JSON.parse(text)
                 if (parsed.type === 'resize' && stream.setWindow) {
-                  stream.setWindow(parsed.rows, parsed.cols, 0, 0)
+                  const nextRows = Number(parsed.rows)
+                  const nextCols = Number(parsed.cols)
+                  if (Number.isInteger(nextRows) && Number.isInteger(nextCols) && nextRows > 0 && nextRows <= 500 && nextCols > 0 && nextCols <= 500) {
+                    stream.setWindow(nextRows, nextCols, 0, 0)
+                  }
                   return
                 }
                 if (typeof parsed.data === 'string') {

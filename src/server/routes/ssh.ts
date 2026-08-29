@@ -1,14 +1,15 @@
 import { Router } from 'express'
 import { asyncHandler, ok, fail } from '../utils/response'
-import { requireUser } from '../services/authService'
+import { requireUser, requireAdmin } from '../services/authService'
 import { collectMetrics, collectServices } from '../services/sshService'
 import { credentialService } from '../services/credentialService'
 import { logger } from '../utils/logger'
+import { markAssetCollectionSuccess, markAssetConnectionFailure } from '../services/assetHealthService'
 
 export const sshRouter = Router()
 
 // 一次性采集主机指标（CPU/内存/磁盘/负载），经 SSH 连接目标主机执行命令。
-sshRouter.post('/collect', requireUser, asyncHandler(async (req, res) => {
+sshRouter.post('/collect', requireUser, requireAdmin, asyncHandler(async (req, res) => {
   const { host, port, credentialId, assetId } = req.body as {
     host?: string
     port?: number
@@ -27,6 +28,7 @@ sshRouter.post('/collect', requireUser, asyncHandler(async (req, res) => {
       password: secret?.password,
       privateKey: secret?.privateKey,
     }, assetId)
+    if (assetId) markAssetCollectionSuccess(assetId, sample)
     ok(res, sample)
   } catch (e) {
     logger.error(`[ssh] collect failed: ${e instanceof Error ? e.stack || e.message : String(e)}`)
@@ -39,12 +41,13 @@ sshRouter.post('/collect', requireUser, asyncHandler(async (req, res) => {
       : msg.includes('ENOTFOUND') || msg.includes('EAI_AGAIN') || msg.includes('ECONNREFUSED')
         ? '主机不可达 / 22 端口未开放'
       : msg
+    if (assetId) markAssetConnectionFailure(assetId, detail || 'SSH 采集失败')
     fail(res, 502, 'SSH 采集失败，请检查主机 / 凭据 / 网络', detail)
   }
 }))
 
 // 服务检查：列出目标主机运行中的 systemd 服务（支持按名称过滤）
-sshRouter.post('/services', requireUser, asyncHandler(async (req, res) => {
+sshRouter.post('/services', requireUser, requireAdmin, asyncHandler(async (req, res) => {
   const { host, port, credentialId, name } = req.body as {
     host?: string
     port?: number

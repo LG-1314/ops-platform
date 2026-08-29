@@ -1,8 +1,8 @@
 import { Router } from 'express'
 import { asyncHandler, ok, fail } from '../utils/response'
-import { requireUser } from '../services/authService'
+import { requireUser, requireAdmin } from '../services/authService'
 import { memoryStore } from '../store/memoryStore'
-import { runCheck, runAllChecks } from '../services/serviceCheckService'
+import { runCheck, runAllChecks, validateServiceCheckInput } from '../services/serviceCheckService'
 import type { ServiceCheck } from '@shared/types'
 
 export const serviceChecksRouter = Router()
@@ -11,7 +11,7 @@ function genId(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
 }
 
-serviceChecksRouter.use(requireUser)
+serviceChecksRouter.use(requireUser, requireAdmin)
 
 serviceChecksRouter.get('/', asyncHandler(async (_req, res) => {
   ok(res, memoryStore.getServiceChecks())
@@ -19,16 +19,15 @@ serviceChecksRouter.get('/', asyncHandler(async (_req, res) => {
 
 serviceChecksRouter.post('/', asyncHandler(async (req, res) => {
   const b = req.body as Partial<ServiceCheck>
-  if (!b?.name || !b?.assetId || !b?.checkType || !b?.serviceName) {
-    return fail(res, 400, 'name/assetId/checkType/serviceName 必填')
-  }
-  if (b.checkType === 'port' && !b.port) return fail(res, 400, '端口检查必须指定端口号')
+  const validationError = validateServiceCheckInput(b, true)
+  if (validationError) return fail(res, 400, validationError)
+  if (!memoryStore.getAssets().some((a) => a.id === b.assetId)) return fail(res, 400, '关联资产不存在')
   const c: ServiceCheck = {
     id: genId('svcchk'),
-    name: b.name,
-    assetId: b.assetId,
-    checkType: b.checkType,
-    serviceName: b.serviceName,
+    name: b.name!,
+    assetId: b.assetId!,
+    checkType: b.checkType!,
+    serviceName: b.serviceName!,
     port: b.port,
     expectAlive: b.expectAlive ?? true,
     autoHeal: b.autoHeal ?? false,
@@ -40,6 +39,12 @@ serviceChecksRouter.post('/', asyncHandler(async (req, res) => {
 
 serviceChecksRouter.put('/:id', asyncHandler(async (req, res) => {
   const patch = req.body as Partial<ServiceCheck>
+  const existing = memoryStore.getServiceChecks().find((x) => x.id === req.params.id)
+  if (!existing) return fail(res, 404, 'service check not found')
+  const merged = { ...existing, ...patch }
+  const validationError = validateServiceCheckInput(merged)
+  if (validationError) return fail(res, 400, validationError)
+  if (!memoryStore.getAssets().some((a) => a.id === merged.assetId)) return fail(res, 400, '关联资产不存在')
   const updated = memoryStore.updateServiceCheck(req.params.id, {
     name: patch.name,
     assetId: patch.assetId,
@@ -50,7 +55,6 @@ serviceChecksRouter.put('/:id', asyncHandler(async (req, res) => {
     autoHeal: patch.autoHeal,
     enabled: patch.enabled,
   })
-  if (!updated) return fail(res, 404, 'service check not found')
   ok(res, updated)
 }))
 

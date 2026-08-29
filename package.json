@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "vite",
     "build": "cross-env BUILD_ELECTRON=true vite build",
-    "build:win": "npm run build",
+    "build:win": "npm run pack:win",
     "pack:win": "npm run build && electron-builder --win --x64",
     "test": "tsx --test src/server/__tests__/unit.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
@@ -80,6 +80,10 @@
       {
         "from": "build/vc_redist.x64.exe",
         "to": "vc_redist.x64.exe"
+      },
+      {
+        "from": "build/icon.ico",
+        "to": "icon.ico"
       }
     ],
     "npmRebuild": false,

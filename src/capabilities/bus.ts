@@ -24,6 +24,7 @@ import type {
   DiagnoseResult,
   Asset,
   AssetType,
+  AssetConnectionTestResult,
   KnowledgeHit,
   RelatedProject,
   PatrolTask,
@@ -234,6 +235,7 @@ export const api = {
     discover: () => post<Asset[]>('/assets/discover'),
     probeAll: () => post<Asset[]>('/assets/probe'),
     probe: (id: string) => post<Asset>(`/assets/${id}/probe`),
+    testConnection: (target: Pick<Asset, 'host' | 'ip' | 'port'>) => post<AssetConnectionTestResult>('/assets/test-connection', target),
   },
   diagnostics: {
     run: (assetId?: string) => post<DiagnoseResult>('/diagnostics/run', { assetId }),
@@ -329,6 +331,7 @@ export const api = {
   db: {
     list: () => get<DbConnection[]>('/db'),
     create: (c: Partial<DbConnection>) => post<DbConnection>('/db', c),
+    update: (id: string, c: Partial<DbConnection>) => put<DbConnection>(`/db/${id}`, c),
     health: (id: string) => get<DbHealth>(`/db/${id}/health`),
     remove: (id: string) => del<{ ok: true }>(`/db/${id}`),
   },
@@ -430,8 +433,9 @@ export interface MonitorSummary {
     port?: number
     credentialId?: string
     status: Status
+    statusReason?: string
     reachable?: boolean
-    healthScore?: number
+    healthScore: number | null
     latencyMs?: number
     lastCheckAt?: string
     cpuPct?: number

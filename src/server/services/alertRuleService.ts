@@ -24,8 +24,10 @@ export function resetAlertCooldown(): void {
 function metricValue(rule: AlertRule, asset: Asset): { value: number; label: string } | null {
   switch (rule.metric) {
     case 'reachable':
+      if (asset.reachable == null) return null
       return { value: asset.reachable ? 1 : 0, label: asset.reachable ? '在线' : '离线' }
     case 'latency':
+      if (asset.latencyMs == null) return null
       return { value: asset.latencyMs ?? 0, label: `${asset.latencyMs ?? 0}ms` }
     case 'healthScore':
       return { value: asset.healthScore, label: String(asset.healthScore) }
@@ -49,13 +51,13 @@ function metricValue(rule: AlertRule, asset: Asset): { value: number; label: str
     }
     case 'netRx': {
       const m = getLatest(asset.id)
-      if (!m?.network?.rxRateKbps) return null
+      if (m?.network?.rxRateKbps == null) return null
       const v = Math.round(m.network.rxRateKbps * 100) / 100
       return { value: v, label: `${v} KB/s` }
     }
     case 'netTx': {
       const m = getLatest(asset.id)
-      if (!m?.network?.txRateKbps) return null
+      if (m?.network?.txRateKbps == null) return null
       const v = Math.round(m.network.txRateKbps * 100) / 100
       return { value: v, label: `${v} KB/s` }
     }

@@ -6,7 +6,15 @@ node_modules/
 # 构建产物
 dist/
 dist-electron/
+release/
 release-v2/
+release-enterprise/
+release-final/
+release-final-new/
+build/.icon-sizes/
+build/icon-source.png
+*.blockmap
+builder-debug.yml
 
 # 系统
 .DS_Store
@@ -18,6 +26,7 @@ Thumbs.db
 # 日志
 *.log
 logs/
+.workbuddy/
 
 # 运行时数据
 ops-key.json

@@ -3,7 +3,7 @@
 把分散的运维能力（资产纳管、全栈诊断、智能巡检、知识检索、自动化治理、DevOps 编排、容器集群、运维防呆）收敛到一个统一工作台。所有诊断 **只读、不修改系统**，结果结构化、可追溯、可导出。
 
 > 形态：Electron 桌面壳 + Vite 本地网页预览；后端 Node/Express 作为「能力总线」暴露 REST API。
-> 版本：v0.1.0 · 19 项测试全部通过
+> 版本：v0.1.0 · 55 项测试全部通过
 
 ## 快速启动
 
@@ -18,8 +18,10 @@ npx tsx src/server/index.ts
 npm run dev
 # 打开 http://127.0.0.1:5173
 
-# 3. 生产构建（Electron 打包）
-npm run build:win   # 构建 + 打包 NSIS 安装包
+# 3. 生产构建（测试 + 构建 + NSIS 安装包）
+# 推荐：双击 scripts/pack.bat，或：
+npm run pack:win
+# 产物在 release/ ：安装包 *.exe 与免安装目录 win-unpacked/
 ```
 
 ## 架构
@@ -56,7 +58,7 @@ Express 能力总线 (src/server, 默认端口 8787)
 | `src/server/` | Express 能力总线、路由、服务层 |
 | `src/diagnostics/` | 跨平台诊断引擎、知识库、解析器 |
 | `src/shared/` | 类型 DTO、常量 |
-| `docs/` | PRD、系统设计、类图、时序图 |
+| `docs/` | API 参考、UI 规范、知识库指南 |
 | `build/` | NSIS 钩子与内置 VC++ 运行库 |
 
 ## 功能模块
@@ -90,14 +92,16 @@ Express 能力总线 (src/server, 默认端口 8787)
 - 多服务器可视化：监控大盘健康环 + 实时指标 + 快速操作（终端/趋势/采集）
 - 主机监控：表格内嵌实时指标条 + 采集全部 + 从大盘一键跳转趋势
 - 主题：深色/浅色切换 + localStorage 持久化
-- 非功能：Vite chunk 分割、操作日志、分页组件、ESLint + Prettier、19 项单元测试
+- 非功能：Vite chunk 分割、操作日志、分页组件、ESLint + Prettier、55 项单元测试
 
-## 日志位置
+## 日志与数据位置
 
-- 启动日志：`%APPDATA%\ops-platform-boot.log`
-- 崩溃日志：`%APPDATA%\ops-platform-crash.log`
-- 能力总线运行日志：`%APPDATA%\logs\ops-YYYY-MM-DD.log`
-- 数据持久化：`%APPDATA%\store.json`、`metrics.json`、`health.json`、`audit.json`
+桌面端数据目录为 `%APPDATA%\ops-platform\`（Electron `userData`）：
+
+- 启动日志：`ops-platform-boot.log`
+- 崩溃日志：`ops-platform-crash.log`
+- 能力总线运行日志：`logs\ops-YYYY-MM-DD.log`
+- 数据持久化：`store.json`、`metrics.json`、`health.json`、`audit.json`
 
 ## 环境变量
 

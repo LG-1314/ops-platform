@@ -8,11 +8,11 @@ const shadowFor = (mode: Mode) => tokens.shadow[mode]
 
 /**
  * 构建 Ops Cockpit MUI 主题（消费 design-tokens.json）。
- * Token 与 design-tokens.css / docs/UIUX.md / docs/Spec.md §8 完全一致。
+ * Token 与 design-tokens.json / docs/UIUX.md 一致。
  *
  * 用法：
  *   import { buildTheme } from './theme/theme'
- *   const theme = buildTheme('dark')   // 或 'light'，跟随 nativeTheme
+ *   const theme = buildTheme('dark')   // 或 'light'
  *
  * 数值/指标单元格请使用 --font-mono + font-variant-numeric: tabular-nums + 右对齐
  * （见 docs/components-spec.md），其余 UI 文本使用默认 Inter 字体族。

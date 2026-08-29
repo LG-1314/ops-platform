@@ -1,12 +1,12 @@
 import { Router } from 'express'
-import { requireUser } from '../services/authService'
+import { requireUser, requireAdmin } from '../services/authService'
 import { asyncHandler, ok, fail } from '../utils/response'
 import { notificationService } from '../services/notificationService'
 
 export const notificationChannelsRouter = Router()
 
 // 用户级鉴权：所有路由需携带有效会话 token（与 users/cloud/ai 等路由一致）
-notificationChannelsRouter.use(requireUser)
+notificationChannelsRouter.use(requireUser, requireAdmin)
 
 notificationChannelsRouter.get('/', asyncHandler(async (_req, res) => {
   ok(res, notificationService.list())

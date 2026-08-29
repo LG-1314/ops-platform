@@ -1,15 +1,17 @@
 import { Router } from 'express'
-import { requireUser } from '../services/authService'
+import { requireUser, requireAdmin } from '../services/authService'
 import { asyncHandler, ok, fail } from '../utils/response'
 import { assetService } from '../services/assetService'
 import { monitorService } from '../services/monitorService'
+import { probeAsset } from '../services/monitorService'
 import { paginate } from '../utils/paginate'
-import type { Asset, AssetType } from '@shared/types'
+import type { AssetType } from '@shared/types'
+import { normalizeAssetInput, validateAssetConnectionTarget, validateAssetInput } from '../services/assetValidationService'
 
 export const assetsRouter = Router()
 
 // 用户级鉴权：所有路由需携带有效会话 token（与 users/cloud/ai 等路由一致）
-assetsRouter.use(requireUser)
+assetsRouter.use(requireUser, requireAdmin)
 
 // 列表（/assets 必须在 /assets/:id 之前；/discover 也需在 :id 之前）
 assetsRouter.get('/', asyncHandler(async (req, res) => {
@@ -20,6 +22,30 @@ assetsRouter.get('/', asyncHandler(async (req, res) => {
 
 assetsRouter.post('/discover', asyncHandler(async (_req, res) => {
   ok(res, assetService.discover())
+}))
+
+// 未保存资产的连通性测试：有端口时进行 TCP 探测，否则进行 ICMP ping。
+assetsRouter.post('/test-connection', asyncHandler(async (req, res) => {
+  const input = req.body as Record<string, unknown>
+  const validationError = validateAssetConnectionTarget(input)
+  if (validationError) return fail(res, 400, validationError)
+
+  const target = normalizeAssetInput(input)
+  const checkedAt = new Date().toISOString()
+  const result = await probeAsset({
+    id: 'asset-connection-test',
+    name: 'connection-test',
+    type: 'server',
+    host: target.host!,
+    ip: target.ip,
+    port: target.port,
+    source: 'manual',
+    tags: [],
+    createdAt: checkedAt,
+    healthScore: 0,
+    status: 'unknown',
+  })
+  ok(res, { ...result, checkedAt })
 }))
 
 // 立即对全部资产做一次存活探测（定时任务之外的人工触发）
@@ -35,11 +61,17 @@ assetsRouter.get('/:id', asyncHandler(async (req, res) => {
 }))
 
 assetsRouter.post('/', asyncHandler(async (req, res) => {
-  ok(res, assetService.create(req.body as Partial<Asset>))
+  const input = req.body as Record<string, unknown>
+  const validationError = validateAssetInput(input, true)
+  if (validationError) return fail(res, 400, validationError)
+  ok(res, assetService.create(normalizeAssetInput(input)))
 }))
 
 assetsRouter.put('/:id', asyncHandler(async (req, res) => {
-  const a = assetService.update(req.params.id, req.body as Partial<Asset>)
+  const input = req.body as Record<string, unknown>
+  const validationError = validateAssetInput(input)
+  if (validationError) return fail(res, 400, validationError)
+  const a = assetService.update(req.params.id, normalizeAssetInput(input))
   if (!a) return fail(res, 404, 'asset not found')
   ok(res, a)
 }))

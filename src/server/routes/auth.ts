@@ -44,8 +44,10 @@ function clearLoginAttempts(username: string): void {
 // 登录
 authRouter.post('/login', asyncHandler(async (req, res) => {
   const { username, password } = req.body || {}
-  if (!username || !password) return fail(res, 400, 'username 与 password 必填')
-  const uname = String(username)
+  if (typeof username !== 'string' || typeof password !== 'string') return fail(res, 400, 'username 与 password 必须是字符串')
+  const uname = username.trim()
+  if (!uname || !password) return fail(res, 400, 'username 与 password 必填')
+  if (uname.length > 64 || password.length > 1024) return fail(res, 400, '用户名或密码长度超出限制')
   const remain = lockRemainMs(uname)
   if (remain > 0) {
     return fail(res, 429, `登录尝试过于频繁，请 ${Math.ceil(remain / 60000)} 分钟后再试`)
@@ -76,8 +78,10 @@ authRouter.get('/me', requireUser, asyncHandler(async (req, res) => {
 // 修改密码
 authRouter.post('/change-password', requireUser, asyncHandler(async (req, res) => {
   const { oldPassword, newPassword } = req.body || {}
+  if (typeof oldPassword !== 'string' || typeof newPassword !== 'string') return fail(res, 400, '密码必须是字符串')
   if (!oldPassword || !newPassword) return fail(res, 400, 'oldPassword 与 newPassword 必填')
   if (newPassword.length < 6) return fail(res, 400, '新密码至少 6 位')
+  if (newPassword.length > 1024) return fail(res, 400, '新密码长度不能超过 1024 位')
   const user = (req as Request & { user?: SafeUser }).user
   const u = memoryStore.getUsers().find((x) => x.id === user?.id)
   if (!u) return fail(res, 404, '用户不存在')

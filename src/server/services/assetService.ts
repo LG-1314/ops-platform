@@ -36,6 +36,7 @@ export const assetService = {
       type: (partial.type as AssetType) || 'server',
       host: partial.host || 'unknown',
       ip: partial.ip,
+      port: partial.port,
       source: (partial.source as AssetSource) || 'manual',
       tags: partial.tags || [],
       credentialId: partial.credentialId,

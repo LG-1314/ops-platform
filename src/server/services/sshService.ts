@@ -11,6 +11,11 @@ export interface SshConnectParams {
   privateKey?: string
 }
 
+/** 远端 shell 参数安全转义；用于需要拼接到单条 SSH 命令的用户输入。 */
+export function shellQuoteArg(value: string): string {
+  return `'${String(value).replace(/'/g, "'\\''")}'`
+}
+
 /** 建立 SSH 连接（密码或私钥），超时自动销毁，绝不挂起。 */
 export function connectSsh(params: SshConnectParams, timeoutMs = 10000): Promise<Client> {
   return new Promise((resolve, reject) => {
@@ -159,7 +164,7 @@ export async function collectServices(
   const client = await connectSsh(params)
   try {
     const cmd = filter
-      ? `systemctl show -p Names,ActiveState,Description --value "${filter}" 2>/dev/null`
+      ? `systemctl show -p Names,ActiveState,Description --value ${shellQuoteArg(filter)} 2>/dev/null`
       : `systemctl list-units --type=service --all --no-pager --no-legend 2>/dev/null | head -100`
     const out = await runCommand(client, cmd, 10000).catch(() => '')
     const services: { name: string; status: string; description: string; active: boolean }[] = []
@@ -202,10 +207,15 @@ export async function collectMetrics(params: SshConnectParams, assetId?: string)
       if (prev?.network?.rxBytes != null && prev.network.txBytes != null) {
         const dtMs = Date.parse(sample.collectedAt) - Date.parse(prev.collectedAt)
         if (dtMs > 0) {
-          sample.network.rxRateKbps =
+          // 网卡计数器重置或溢出时差值可能为负，按 0 处理，避免产生错误的负速率。
+          sample.network.rxRateKbps = Math.max(
+            0,
             Math.round(((sample.network.rxBytes - prev.network.rxBytes) / dtMs) * 1000) / 1024
-          sample.network.txRateKbps =
+          )
+          sample.network.txRateKbps = Math.max(
+            0,
             Math.round(((sample.network.txBytes - prev.network.txBytes) / dtMs) * 1000) / 1024
+          )
         }
       }
     }

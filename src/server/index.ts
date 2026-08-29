@@ -38,6 +38,7 @@ import { auditRouter } from './routes/audit'
 import { firewallRouter } from './routes/firewall'
 import { aiRouter } from './routes/ai'
 import { serviceChecksRouter } from './routes/serviceChecks'
+import { patrolService } from './services/patrolService'
 import { currentUser } from './services/authService'
 import { memoryStore } from './store/memoryStore'
 import { logger } from './utils/logger'
@@ -193,6 +194,16 @@ export function startBackgroundJobs(): void {
     }
   }, 30000)
   backgroundTimers.push(alertTimer)
+
+  // 巡检任务按 Cron 每 30s 检查一次，同一分钟内由 patrolService 做幂等保护。
+  const patrolTimer = setInterval(() => {
+    try {
+      patrolService.runScheduled()
+    } catch {
+      /* 单次调度失败不应中断能力总线 */
+    }
+  }, 30000)
+  backgroundTimers.push(patrolTimer)
 }
 
 // 停止所有后台定时任务

@@ -1,12 +1,12 @@
 import { Router } from 'express'
-import { requireUser } from '../services/authService'
+import { requireUser, requireAdmin } from '../services/authService'
 import { asyncHandler, ok } from '../utils/response'
 import { diagnosticService } from '../services/diagnosticService'
 
 export const diagnosticsRouter = Router()
 
 // 用户级鉴权：所有路由需携带有效会话 token（与 users/cloud/ai 等路由一致）
-diagnosticsRouter.use(requireUser)
+diagnosticsRouter.use(requireUser, requireAdmin)
 
 // 执行一次只读系统体检
 diagnosticsRouter.post('/run', asyncHandler(async (req, res) => {

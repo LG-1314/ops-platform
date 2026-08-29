@@ -1,13 +1,13 @@
 import { Router } from 'express'
 import { asyncHandler, ok, fail } from '../utils/response'
-import { requireUser } from '../services/authService'
+import { requireUser, requireAdmin } from '../services/authService'
 import { collectFirewall, addFirewallRule, deleteFirewallRule, resolveSshParams, logFirewallError } from '../services/firewallService'
 import { auditService } from '../services/auditService'
 import type { AddFirewallRuleInput } from '@shared/types'
 
 export const firewallRouter = Router()
 
-firewallRouter.use(requireUser)
+firewallRouter.use(requireUser, requireAdmin)
 
 // 采集防火墙状态 + 规则 + 监听端口 + 连接（经资产关联的 SSH 凭据）
 firewallRouter.get('/:assetId/collect', asyncHandler(async (req, res) => {

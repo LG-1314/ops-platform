@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { requireUser } from '../services/authService'
+import { requireUser, requireAdmin } from '../services/authService'
 import { asyncHandler, ok, fail } from '../utils/response'
 import { automationService } from '../services/automationService'
 import type { Incident, IncidentState, CicdPipeline } from '@shared/types'
@@ -7,7 +7,7 @@ import type { Incident, IncidentState, CicdPipeline } from '@shared/types'
 export const automationRouter = Router()
 
 // 用户级鉴权：所有路由需携带有效会话 token（与 users/cloud/ai 等路由一致）
-automationRouter.use(requireUser)
+automationRouter.use(requireUser, requireAdmin)
 
 automationRouter.get('/incidents', asyncHandler(async (_req, res) => {
   ok(res, automationService.incidents())

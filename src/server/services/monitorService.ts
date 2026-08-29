@@ -4,27 +4,7 @@ import net from 'node:net'
 import { execFile } from 'node:child_process'
 import { memoryStore } from '../store/memoryStore'
 import type { Asset, Status } from '@shared/types'
-
-/**
- * host 合法性校验：仅允许 IPv4 / IPv6 / 域名 / localhost。
- * 防御纵深——即便校验遗漏，pingProbe 也用 execFile 数组参数（无 shell），
- * 参数恒为独立 argv，无法拼出第二条命令，从根本上杜绝命令注入（原 exec 拼接可被 `1.2.3.4; calc` 注入）。
- */
-function isValidHost(h: string): boolean {
-  if (!h || h.length === 0 || h.length > 253) return false
-  // IPv4
-  if (/^(\d{1,3}\.){3}\d{1,3}$/.test(h)) {
-    return h.split('.').every((n) => {
-      const v = Number(n)
-      return Number.isInteger(v) && v >= 0 && v <= 255
-    })
-  }
-  // IPv6（含冒号且为十六进制/冒号组合）
-  if (h.includes(':') && /^[:0-9a-fA-F]+$/.test(h)) return true
-  // 域名 / localhost（标签式）
-  if (/^[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)*$/.test(h)) return true
-  return false
-}
+import { isValidAssetHost } from './assetValidationService'
 
 /** TCP 端口探测：最可靠、无需特殊权限；超时即判不可达 */
 function tcpProbe(host: string, port: number, timeoutMs = 2000): Promise<{ reachable: boolean; latencyMs?: number }> {
@@ -50,7 +30,7 @@ function tcpProbe(host: string, port: number, timeoutMs = 2000): Promise<{ reach
  *  使用 execFile + 数组参数（无 shell），host 经 isValidHost 校验，杜绝命令注入。 */
 function pingProbe(host: string, timeoutMs = 2000): Promise<{ reachable: boolean; latencyMs?: number }> {
   return new Promise((resolve) => {
-    if (!isValidHost(host)) return resolve({ reachable: false })
+    if (!isValidAssetHost(host)) return resolve({ reachable: false })
     const isWin = process.platform === 'win32'
     const args = isWin
       ? ['-n', '1', '-w', String(timeoutMs), host]
@@ -93,23 +73,31 @@ function scoreFromResult(reachable: boolean, latencyMs?: number): { status: Stat
 }
 
 let monitorInterval: ReturnType<typeof setInterval> | null = null
+let scanRunning = false
 
 export const monitorService = {
   /** 立即扫描全部资产一次 */
   async scanOnce(): Promise<void> {
+    if (scanRunning) return
+    scanRunning = true
     const assets = memoryStore.getAssets()
-    for (const a of assets) {
-      const { reachable, latencyMs } = await probeAsset(a)
-      const { status, healthScore } = scoreFromResult(reachable, latencyMs)
-      const now = new Date().toISOString()
-      memoryStore.updateAsset(a.id, {
-        reachable,
-        latencyMs,
-        lastCheckAt: now,
-        status,
-        healthScore,
-        lastScanAt: now,
-      })
+    try {
+      for (const a of assets) {
+        const { reachable, latencyMs } = await probeAsset(a)
+        const { status, healthScore } = scoreFromResult(reachable, latencyMs)
+        const now = new Date().toISOString()
+        memoryStore.updateAsset(a.id, {
+          reachable,
+          latencyMs,
+          lastCheckAt: now,
+          status,
+          healthScore,
+          lastScanAt: now,
+          statusReason: reachable ? undefined : '主机不可达或探测超时',
+        })
+      }
+    } finally {
+      scanRunning = false
     }
   },
 

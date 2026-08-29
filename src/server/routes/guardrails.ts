@@ -1,12 +1,12 @@
 import { Router } from 'express'
-import { requireUser } from '../services/authService'
+import { requireUser, requireAdmin } from '../services/authService'
 import { asyncHandler, ok } from '../utils/response'
 import { guardrailService } from '../services/guardrailService'
 
 export const guardrailsRouter = Router()
 
 // 用户级鉴权：所有路由需携带有效会话 token（与 users/cloud/ai 等路由一致）
-guardrailsRouter.use(requireUser)
+guardrailsRouter.use(requireUser, requireAdmin)
 
 // 执行防呆检查（真实规则引擎：危险命令/脱敏/跨设备/审批）
 guardrailsRouter.post('/check', asyncHandler(async (req, res) => {

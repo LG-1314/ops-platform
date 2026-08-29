@@ -152,7 +152,7 @@ export default function TopBar({ onMenu, alertCount = 0 }: Props) {
           </Badge>
         </IconButton>
 
-        {/* 身份切换：可点击，弹菜单在「运维管理员 / 个人用户」间切换 */}
+        {/* 管理员可切换个人视图；个人账号不能通过本地状态提权。 */}
         <Box
           ref={avatarRef}
           onClick={(e) => setAnchorEl(e.currentTarget)}
@@ -206,16 +206,18 @@ export default function TopBar({ onMenu, alertCount = 0 }: Props) {
           anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
           transformOrigin={{ vertical: 'top', horizontal: 'right' }}
         >
-          <MenuItem selected={role === 'admin'} onClick={() => onPickRole('admin')}>
-            <ListItemIcon>
-              <AdminPanelSettings fontSize="small" color={role === 'admin' ? 'primary' : 'inherit'} />
-            </ListItemIcon>
-            <ListItemText
-              primary="运维管理员"
-              secondary="完整视图：全部模块与高级能力"
-            />
-            {role === 'admin' && <Check fontSize="small" color="primary" />}
-          </MenuItem>
+          {user?.role === 'admin' && (
+            <MenuItem selected={role === 'admin'} onClick={() => onPickRole('admin')}>
+              <ListItemIcon>
+                <AdminPanelSettings fontSize="small" color={role === 'admin' ? 'primary' : 'inherit'} />
+              </ListItemIcon>
+              <ListItemText
+                primary="运维管理员"
+                secondary="完整视图：全部模块与高级能力"
+              />
+              {role === 'admin' && <Check fontSize="small" color="primary" />}
+            </MenuItem>
+          )}
           <MenuItem selected={role === 'personal'} onClick={() => onPickRole('personal')}>
             <ListItemIcon>
               <Person fontSize="small" color={role === 'personal' ? 'primary' : 'inherit'} />
