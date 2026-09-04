@@ -1,5 +1,6 @@
 import { Box, Typography, Stack } from '@mui/material'
 import type { ReactNode } from 'react'
+import { memo } from 'react'
 
 interface Props {
   title: string
@@ -7,7 +8,7 @@ interface Props {
   actions?: ReactNode
 }
 
-export default function PageHeader({ title, subtitle, actions }: Props) {
+function PageHeaderInner({ title, subtitle, actions }: Props) {
   return (
     <Box
       display="flex"
@@ -29,3 +30,6 @@ export default function PageHeader({ title, subtitle, actions }: Props) {
     </Box>
   )
 }
+
+const PageHeader = memo(PageHeaderInner)
+export default PageHeader

@@ -11,14 +11,14 @@ import {
   Paper,
   Stack,
   Chip,
-  LinearProgress,
   TextField,
   Button,
 } from '@mui/material'
-import { useTheme, type Theme } from '@mui/material/styles'
+import { useTheme } from '@mui/material/styles'
 import { Close as IconClose, Refresh as IconRefresh, ShowChart as IconTrend } from '@mui/icons-material'
 import { api } from '../../capabilities/bus'
 import type { Asset, HostMetricSample } from '@shared/types'
+import MetricBar from './MetricBar'
 import MetricLineChart, { type TrendPoint } from './MetricLineChart'
 
 type RangeKey = '1h' | '6h' | '24h' | 'custom'
@@ -52,24 +52,6 @@ interface Series {
   unit: string
   points: TrendPoint[]
   current?: number
-}
-
-function MetricBar({ label, pct, theme }: { label: string; pct: number; theme: Theme }) {
-  const color =
-    pct >= 90 ? theme.palette.error.main : pct >= 75 ? theme.palette.warning.main : theme.palette.success.main
-  return (
-    <Box sx={{ mb: 1 }}>
-      <Stack direction="row" justifyContent="space-between" sx={{ mb: 0.5 }}>
-        <Typography variant="body2" color="text.secondary">{label}</Typography>
-        <Typography variant="body2" sx={{ fontFamily: 'monospace', color }}>{pct}%</Typography>
-      </Stack>
-      <LinearProgress
-        variant="determinate"
-        value={pct}
-        sx={{ height: 6, borderRadius: 3, '& .MuiLinearProgress-bar': { backgroundColor: color } }}
-      />
-    </Box>
-  )
 }
 
 interface Props {
@@ -251,7 +233,7 @@ export default function HostTrendDrawer({ open, asset, onClose }: Props) {
                 {series
                   .filter((s) => s.key !== 'load' && s.key !== 'net')
                   .map((s) =>
-                    s.current != null ? <MetricBar key={s.key} label={s.label} pct={s.current} theme={theme} /> : null
+                    s.current != null ? <MetricBar key={s.key} label={s.label} pct={s.current} /> : null
                   )}
                 {series.find((s) => s.key === 'load')?.current != null && (
                   <Typography variant="body2" color="text.secondary">

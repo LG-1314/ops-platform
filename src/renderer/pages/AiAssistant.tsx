@@ -15,6 +15,10 @@ import {
   Divider,
   useTheme,
   Tooltip,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
 } from '@mui/material'
 import {
   SmartToy as IconAi,
@@ -102,6 +106,7 @@ export default function AiAssistant() {
   const [configLoading, setConfigLoading] = useState(true)
   const [error, setError] = useState('')
   const [copiedId, setCopiedId] = useState('')
+  const [confirmClear, setConfirmClear] = useState(false)
   const listRef = useRef<HTMLDivElement | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
 
@@ -168,7 +173,11 @@ export default function AiAssistant() {
   }
 
   const clearChat = () => {
-    if (!window.confirm('确认清空当前对话？')) return
+    setConfirmClear(true)
+  }
+
+  const doClearChat = () => {
+    setConfirmClear(false)
     setMessages([
       { role: 'assistant', content: '对话已清空。我是 AI 智能运维助手，请开始新的提问。', typeLen: -1 },
     ])
@@ -314,6 +323,18 @@ export default function AiAssistant() {
           </Box>
         ))}
       </Paper>
+
+      {/* 清空确认 */}
+      <Dialog open={confirmClear} onClose={() => setConfirmClear(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>确认清空</DialogTitle>
+        <DialogContent>
+          确定要清空当前对话吗？
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfirmClear(false)}>取消</Button>
+          <Button color="error" variant="contained" onClick={doClearChat}>清空</Button>
+        </DialogActions>
+      </Dialog>
 
       {/* 输入区域 */}
       <Paper

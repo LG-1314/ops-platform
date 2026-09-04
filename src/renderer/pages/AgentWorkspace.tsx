@@ -100,6 +100,7 @@ export default function AgentWorkspace() {
   const [saving, setSaving] = useState(false)
 
   const [configOk, setConfigOk] = useState(false)
+  const [confirmDeleteAgent, setConfirmDeleteAgent] = useState<AiAgent | null>(null)
 
   const loadAgents = async () => {
     setLoading(true)
@@ -256,11 +257,16 @@ export default function AgentWorkspace() {
     }
   }
 
-  const onDelete = async (a: AiAgent) => {
-    if (!window.confirm(`确认删除智能体「${a.name}」？`)) return
+  const onDelete = (a: AiAgent) => {
+    setConfirmDeleteAgent(a)
+  }
+
+  const doDeleteAgent = async () => {
+    if (!confirmDeleteAgent) return
     try {
-      await api.ai.agents.remove(a.id)
-      setSelectedId((prev) => (prev === a.id ? '' : prev))
+      await api.ai.agents.remove(confirmDeleteAgent.id)
+      setSelectedId((prev) => (prev === confirmDeleteAgent.id ? '' : prev))
+      setConfirmDeleteAgent(null)
       await loadAgents()
     } catch (e) {
       setError((e as Error).message || '删除失败')
@@ -502,6 +508,18 @@ export default function AgentWorkspace() {
           </Card>
         </Box>
       </GridContainer>
+
+      {/* 删除确认 */}
+      <Dialog open={!!confirmDeleteAgent} onClose={() => setConfirmDeleteAgent(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>确认删除</DialogTitle>
+        <DialogContent>
+          确定要删除智能体「{confirmDeleteAgent?.name}」吗？
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfirmDeleteAgent(null)}>取消</Button>
+          <Button color="error" variant="contained" onClick={() => void doDeleteAgent()}>删除</Button>
+        </DialogActions>
+      </Dialog>
 
       {/* 新建 / 编辑智能体 */}
       <Dialog open={manageOpen} onClose={() => setManageOpen(false)} maxWidth="sm" fullWidth>

@@ -1,6 +1,7 @@
 import { Chip } from '@mui/material'
 import { CheckCircle, Warning, Error as ErrorIcon, HelpOutline } from '@mui/icons-material'
 import type { ReactElement } from 'react'
+import { memo } from 'react'
 import { STATUS_COLOR, STATUS_LABEL } from '@shared/constants'
 import type { Status } from '@shared/types'
 
@@ -17,7 +18,7 @@ interface Props {
   label?: string
 }
 
-export default function StatusBadge({ status, label }: Props) {
+function StatusBadgeInner({ status, label }: Props) {
   const color = STATUS_COLOR[status]
   return (
     <Chip
@@ -34,3 +35,6 @@ export default function StatusBadge({ status, label }: Props) {
     />
   )
 }
+
+const StatusBadge = memo(StatusBadgeInner)
+export default StatusBadge

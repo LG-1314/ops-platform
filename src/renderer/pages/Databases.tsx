@@ -1,14 +1,8 @@
 import { useEffect, useState } from 'react'
 import {
   Box,
-  Paper,
   Typography,
   Button,
-  Table,
-  TableHead,
-  TableRow,
-  TableCell,
-  TableBody,
   IconButton,
   Dialog,
   DialogTitle,
@@ -19,8 +13,9 @@ import {
   Chip,
   Stack,
   Alert,
-  CircularProgress,
+  Grid,
   Tooltip,
+  CircularProgress,
 } from '@mui/material'
 import { useTheme, type Theme } from '@mui/material/styles'
 import {
@@ -33,6 +28,8 @@ import {
 } from '@mui/icons-material'
 import { api } from '../../capabilities/bus'
 import type { DbConnection, DbHealth, DbType, Status } from '@shared/types'
+import DataTable, { type Column } from '../components/DataTable'
+import PageHeader from '../components/PageHeader'
 import AiDialog from '../components/AiDialog'
 
 function statusColor(theme: Theme, s: Status): string {
@@ -64,6 +61,8 @@ export default function Databases() {
   const [healthOpen, setHealthOpen] = useState(false)
   const [aiCtx, setAiCtx] = useState<{ title: string; payload: Record<string, unknown> } | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [confirmDeleteName, setConfirmDeleteName] = useState('')
   const [editingId, setEditingId] = useState<string | null>(null)
 
   const [form, setForm] = useState<{
@@ -104,11 +103,16 @@ export default function Databases() {
     }
   }
 
-  async function onDelete(id: string) {
-    const target = conns.find((c) => c.id === id)
-    if (!target || !window.confirm(`确认删除数据库连接“${target.name}”？此操作不可撤销。`)) return
+  function askDelete(id: string, name: string) {
+    setConfirmDeleteId(id)
+    setConfirmDeleteName(name)
+  }
+
+  async function doDelete() {
+    if (!confirmDeleteId) return
     try {
-      await api.db.remove(id)
+      await api.db.remove(confirmDeleteId)
+      setConfirmDeleteId(null)
       await load()
     } catch (e) {
       setError((e as Error).message)
@@ -171,26 +175,53 @@ export default function Databases() {
     }
   }
 
+  const columns: Column<DbConnection>[] = [
+    { key: 'name', label: '名称', render: (c) => <Typography variant="body2" sx={{ fontWeight: 600 }}>{c.name}</Typography> },
+    { key: 'dbType', label: '类型', render: (c) => <Chip size="small" label={c.dbType} /> },
+    { key: 'host', label: '地址', render: (c) => <Typography variant="body2" sx={{ fontFamily: 'var(--font-mono)' }}>{c.host}:{c.port}</Typography> },
+    { key: 'database', label: '数据库', render: (c) => c.database || '-' },
+    { key: 'credentialId', label: '凭据', render: (c) => c.credentialId ? '已关联' : '无' },
+    {
+      key: '__actions',
+      label: '操作',
+      render: (c) => (
+        <Stack direction="row" spacing={0.5} alignItems="center">
+          <Tooltip title="健康检查">
+            <IconButton size="small" onClick={() => void onHealth(c)}>
+              <IconHealth fontSize="small" />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="编辑连接">
+            <IconButton size="small" onClick={() => openEdit(c)}>
+              <IconEdit fontSize="small" />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="删除">
+            <IconButton size="small" onClick={() => askDelete(c.id, c.name)}>
+              <IconDelete fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        </Stack>
+      ),
+    },
+  ]
+
   return (
     <Box>
-      <Stack direction="row" justifyContent="space-between" alignItems="center" mb={2}>
-        <Box>
-          <Typography variant="h5" sx={{ fontWeight: 700 }}>
-            数据库监控
-          </Typography>
-          <Typography variant="body2" sx={{ color: theme.palette.text.secondary }}>
-            纳管 MySQL / PostgreSQL / Redis，实时探测连通性与关键指标
-          </Typography>
-        </Box>
-        <Stack direction="row" spacing={1}>
-          <Button startIcon={<IconRefresh />} onClick={() => void load()} color="inherit">
-            刷新
-          </Button>
-          <Button variant="contained" startIcon={<IconAdd />} onClick={openCreate}>
-            添加连接
-          </Button>
-        </Stack>
-      </Stack>
+      <PageHeader
+        title="数据库监控"
+        subtitle="纳管 MySQL / PostgreSQL / Redis，实时探测连通性与关键指标"
+        actions={
+          <Stack direction="row" spacing={1}>
+            <Button startIcon={<IconRefresh />} onClick={() => void load()} color="inherit">
+              刷新
+            </Button>
+            <Button variant="contained" startIcon={<IconAdd />} onClick={openCreate}>
+              添加连接
+            </Button>
+          </Stack>
+        }
+      />
 
       {error && (
         <Alert severity="error" sx={{ mb: 2 }}>
@@ -198,121 +229,56 @@ export default function Databases() {
         </Alert>
       )}
 
-      <Paper sx={{ p: 0, overflow: 'hidden' }}>
-        {loading ? (
-          <Box display="flex" justifyContent="center" py={6}>
-            <CircularProgress size={28} />
-          </Box>
-        ) : (
-          <Table>
-            <TableHead>
-              <TableRow>
-                <TableCell>名称</TableCell>
-                <TableCell>类型</TableCell>
-                <TableCell>地址</TableCell>
-                <TableCell>数据库</TableCell>
-                <TableCell>凭据</TableCell>
-                <TableCell align="right">操作</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {conns.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={6} sx={{ color: theme.palette.text.secondary }}>
-                    暂无数据库连接，点击「添加连接」开始纳管。
-                  </TableCell>
-                </TableRow>
-              )}
-              {conns.map((c) => (
-                <TableRow key={c.id}>
-                  <TableCell sx={{ fontWeight: 600 }}>{c.name}</TableCell>
-                  <TableCell>
-                    <Chip size="small" label={c.dbType} />
-                  </TableCell>
-                  <TableCell sx={{ fontFamily: 'monospace' }}>
-                    {c.host}:{c.port}
-                  </TableCell>
-                  <TableCell>{c.database || '-'}</TableCell>
-                  <TableCell>{c.credentialId ? '已关联' : '无'}</TableCell>
-                  <TableCell align="right">
-                    <Tooltip title="健康检查">
-                      <IconButton size="small" onClick={() => void onHealth(c)}>
-                        <IconHealth fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
-                    <Tooltip title="编辑连接">
-                      <IconButton size="small" onClick={() => openEdit(c)}>
-                        <IconEdit fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
-                    <Tooltip title="删除">
-                      <IconButton size="small" onClick={() => void onDelete(c.id)}>
-                        <IconDelete fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-      </Paper>
+      {loading ? (
+        <Box display="flex" justifyContent="center" py={6}>
+          <CircularProgress size={28} />
+        </Box>
+      ) : (
+        <DataTable
+          columns={columns}
+          rows={conns}
+          emptyText="暂无数据库连接，点击「添加连接」开始纳管。"
+        />
+      )}
 
       {/* 添加连接 */}
-      <Dialog open={open} onClose={() => setOpen(false)} maxWidth="xs" fullWidth>
+      <Dialog open={open} onClose={() => setOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle>{editingId ? '编辑数据库连接' : '添加数据库连接'}</DialogTitle>
         <DialogContent>
-          <Stack spacing={2} sx={{ mt: 1 }}>
-            <TextField
-              label="名称"
-              fullWidth
-              value={form.name}
-              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-            />
-            <TextField
-              label="类型"
-              select
-              fullWidth
-              value={form.dbType}
-              onChange={(e) => onTypeChange(e.target.value as DbType)}
-            >
-              <MenuItem value="mysql">MySQL</MenuItem>
-              <MenuItem value="postgres">PostgreSQL</MenuItem>
-              <MenuItem value="redis">Redis</MenuItem>
-            </TextField>
-            <TextField
-              label="主机"
-              fullWidth
-              value={form.host}
-              onChange={(e) => setForm((f) => ({ ...f, host: e.target.value }))}
-            />
-            <TextField
-              label="端口"
-              type="number"
-              fullWidth
-              value={form.port}
-              onChange={(e) => setForm((f) => ({ ...f, port: Number(e.target.value) }))}
-            />
-            <TextField
-              label="数据库名（可选）"
-              fullWidth
-              value={form.database}
-              onChange={(e) => setForm((f) => ({ ...f, database: e.target.value }))}
-            />
-            <TextField
-              label="用户名（可选）"
-              fullWidth
-              value={form.username}
-              onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))}
-            />
-            <TextField
-              label={editingId ? '密码（留空保持原凭据）' : '密码'}
-              type="password"
-              fullWidth
-              value={form.password}
-              onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
-            />
-          </Stack>
+          <Grid container spacing={2} sx={{ mt: 0.5 }}>
+            <Grid item xs={12} sm={6}>
+              <TextField label="名称" fullWidth size="small" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField label="类型" select fullWidth size="small" value={form.dbType} onChange={(e) => onTypeChange(e.target.value as DbType)}>
+                <MenuItem value="mysql">MySQL</MenuItem>
+                <MenuItem value="postgres">PostgreSQL</MenuItem>
+                <MenuItem value="redis">Redis</MenuItem>
+              </TextField>
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField label="主机" fullWidth size="small" value={form.host} onChange={(e) => setForm((f) => ({ ...f, host: e.target.value }))} />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField label="端口" type="number" fullWidth size="small" value={form.port} onChange={(e) => setForm((f) => ({ ...f, port: Number(e.target.value) }))} />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField label="数据库名（可选）" fullWidth size="small" value={form.database} onChange={(e) => setForm((f) => ({ ...f, database: e.target.value }))} />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField label="用户名（可选）" fullWidth size="small" value={form.username} onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))} />
+            </Grid>
+            <Grid item xs={12}>
+              <TextField
+                label={editingId ? '密码（留空保持原凭据）' : '密码'}
+                type="password"
+                fullWidth
+                size="small"
+                value={form.password}
+                onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
+              />
+            </Grid>
+          </Grid>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setOpen(false)}>取消</Button>
@@ -372,6 +338,18 @@ export default function Databases() {
             AI 分析
           </Button>
           <Button onClick={() => setHealthOpen(false)}>关闭</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* 删除确认 */}
+      <Dialog open={!!confirmDeleteId} onClose={() => setConfirmDeleteId(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>确认删除</DialogTitle>
+        <DialogContent>
+          确定要删除数据库连接「{confirmDeleteName}」吗？此操作不可撤销。
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfirmDeleteId(null)}>取消</Button>
+          <Button color="error" variant="contained" onClick={() => void doDelete()}>删除</Button>
         </DialogActions>
       </Dialog>
 

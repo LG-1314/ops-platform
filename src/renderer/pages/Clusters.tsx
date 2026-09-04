@@ -81,6 +81,9 @@ export default function Clusters() {
   const [diagTarget, setDiagTarget] = useState<ClusterInfo | null>(null)
   const [lastFailedId, setLastFailedId] = useState('')
 
+  // 删除确认
+  const [confirmDelete, setConfirmDelete] = useState<ClusterInfo | null>(null)
+
   // 编辑对话框状态
   const [editOpen, setEditOpen] = useState(false)
   const [editTarget, setEditTarget] = useState<ClusterInfo | null>(null)
@@ -184,11 +187,16 @@ export default function Clusters() {
     }
   }
 
-  const onDelete = async (c: ClusterInfo) => {
-    if (!window.confirm(`确认删除集群「${c.name}」？此操作不可恢复。`)) return
+  const onDelete = (c: ClusterInfo) => {
+    setConfirmDelete(c)
+  }
+
+  const doDelete = async () => {
+    if (!confirmDelete) return
     setError('')
     try {
-      await api.clusters.remove(c.id)
+      await api.clusters.remove(confirmDelete.id)
+      setConfirmDelete(null)
       loadList()
     } catch (e) {
       setError((e as Error).message || '删除失败')
@@ -539,6 +547,18 @@ export default function Clusters() {
           <Button variant="contained" disabled={saving || !editName || !editEndpoint} onClick={onSaveEdit}>
             {saving ? '保存中…' : '保存'}
           </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* 删除确认 */}
+      <Dialog open={!!confirmDelete} onClose={() => setConfirmDelete(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>确认删除</DialogTitle>
+        <DialogContent>
+          确定要删除集群「{confirmDelete?.name}」吗？此操作不可恢复。
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfirmDelete(null)}>取消</Button>
+          <Button color="error" variant="contained" onClick={() => void doDelete()}>删除</Button>
         </DialogActions>
       </Dialog>
 

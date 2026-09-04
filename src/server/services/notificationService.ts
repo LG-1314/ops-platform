@@ -34,6 +34,7 @@ function escapeHtml(s: string): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
 }
 
 /** 邮件 HTML 模板：级别色块标题 + 逐行消息 + 时间，纯文本为后备。 */

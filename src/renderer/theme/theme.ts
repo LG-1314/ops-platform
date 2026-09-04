@@ -61,6 +61,13 @@ export function buildTheme(mode: Mode = 'dark'): Theme {
             color: c.text,
             fontFamily: tokens.fontFamily.ui,
           },
+          '@media (prefers-reduced-motion: reduce)': {
+            '*': {
+              animationDuration: '0.01ms !important',
+              animationIterationCount: '1 !important',
+              transitionDuration: '0.01ms !important',
+            },
+          },
           '*::-webkit-scrollbar': {
             width: 8,
             height: 8,
@@ -184,7 +191,7 @@ export function buildTheme(mode: Mode = 'dark'): Theme {
       MuiIconButton: {
         styleOverrides: {
           root: {
-            borderRadius: 2,
+            borderRadius: 1.5,
             transition: 'background 0.2s ease, color 0.2s ease',
           },
         },

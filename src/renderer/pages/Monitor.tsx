@@ -11,7 +11,6 @@ import {
   CircularProgress,
   Chip,
   Alert as MuiAlert,
-  LinearProgress,
   useTheme,
   IconButton,
   Tooltip,
@@ -32,26 +31,14 @@ import {
 } from '@mui/icons-material'
 import { api, type MonitorSummary, ApiClientError } from '../../capabilities/bus'
 import type { HealthPoint, Asset } from '@shared/types'
+import { REFRESH_MONITOR_MS } from '@shared/constants'
 import PageHeader from '../components/PageHeader'
+import MetricBar from '../components/MetricBar'
 import MetricLineChart, { type TrendPoint } from '../components/MetricLineChart'
 import HealthRing from '../components/HealthRing'
 import HostTrendDrawer from '../components/HostTrendDrawer'
 import TerminalDialog from '../components/TerminalDialog'
 import type { Theme } from '@mui/material'
-
-function Bar({ label, pct, theme }: { label: string; pct?: number; theme: Theme }) {
-  if (pct == null) return null
-  const color = pct >= 90 ? theme.palette.error.main : pct >= 75 ? theme.palette.warning.main : theme.palette.success.main
-  return (
-    <Box sx={{ mb: 0.8 }}>
-      <Stack direction="row" justifyContent="space-between" sx={{ mb: 0.2 }}>
-        <Typography variant="caption" color="text.secondary">{label}</Typography>
-        <Typography variant="caption" sx={{ fontFamily: 'monospace', color }}>{pct}%</Typography>
-      </Stack>
-      <LinearProgress variant="determinate" value={pct} sx={{ height: 4, borderRadius: 2, '& .MuiLinearProgress-bar': { backgroundColor: color } }} />
-    </Box>
-  )
-}
 
 // 稳定空数组引用：避免 `summary?.hosts ?? []` 每次渲染生成新数组
 const EMPTY_HOSTS: MonitorSummary['hosts'] = []
@@ -102,7 +89,7 @@ export default function Monitor() {
   }
   useEffect(() => {
     load()
-    const t = setInterval(load, 30000) // 30s 自动刷新
+    const t = setInterval(load, REFRESH_MONITOR_MS)
     return () => clearInterval(t)
   }, [])
 
@@ -287,9 +274,9 @@ export default function Monitor() {
                       </Stack>
 
                       {/* 指标进度条 */}
-                      <Bar label="CPU 使用率" pct={h.cpuPct} theme={theme} />
-                      <Bar label="内存使用率" pct={h.memPct} theme={theme} />
-                      <Bar label="磁盘使用率" pct={h.diskPct} theme={theme} />
+                      <MetricBar label="CPU 使用率" pct={h.cpuPct} compact />
+                      <MetricBar label="内存使用率" pct={h.memPct} compact />
+                      <MetricBar label="磁盘使用率" pct={h.diskPct} compact />
 
                       {/* 网络速率 */}
                       {(h.netRx != null || h.netTx != null) && (

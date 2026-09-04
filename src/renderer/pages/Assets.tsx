@@ -103,6 +103,7 @@ export default function Assets() {
   const [bulkTags, setBulkTags] = useState('')
   const [bulkTagBusy, setBulkTagBusy] = useState(false)
   const [tagFilter, setTagFilter] = useState('')
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false)
 
   const load = () => {
     setLoading(true)
@@ -323,8 +324,13 @@ export default function Assets() {
 
   // 批量删除（逐个调用现有单删接口，成功后清空选择）
   const bulkDelete = async () => {
+    setConfirmBulkDelete(true)
+  }
+
+  const doBulkDelete = async () => {
+    setConfirmBulkDelete(false)
     const ids = [...selected]
-    if (!ids.length || !window.confirm(`确认批量删除选中的 ${ids.length} 个资产？此操作不可恢复。`)) return
+    if (!ids.length) return
     setError('')
     let failed = 0
     for (const id of ids) {
@@ -759,6 +765,17 @@ export default function Assets() {
           <Button color="error" variant="contained" onClick={() => void confirmDelete()} disabled={deleting}>
             {deleting ? '删除中…' : '删除'}
           </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={confirmBulkDelete} onClose={() => setConfirmBulkDelete(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>确认批量删除</DialogTitle>
+        <DialogContent>
+          确定要删除选中的 {selected.size} 个资产吗？此操作不可恢复。
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfirmBulkDelete(false)}>取消</Button>
+          <Button color="error" variant="contained" onClick={() => void doBulkDelete()}>删除</Button>
         </DialogActions>
       </Dialog>
     </Box>

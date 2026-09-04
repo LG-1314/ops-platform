@@ -71,6 +71,7 @@ export default function ServiceChecks() {
     autoHeal: false,
     enabled: true,
   })
+  const [confirmDelete, setConfirmDelete] = useState<ServiceCheck | null>(null)
 
   const load = () => {
     setLoading(true)
@@ -178,12 +179,17 @@ export default function ServiceChecks() {
     }
   }
 
-  const onDelete = async (c: ServiceCheck) => {
-    if (!window.confirm(`确认删除检查项「${c.name}」？`)) return
+  const onDelete = (c: ServiceCheck) => {
+    setConfirmDelete(c)
+  }
+
+  const doDelete = async () => {
+    if (!confirmDelete) return
     setError('')
     try {
-      await api.serviceChecks.remove(c.id)
-      setChecks((prev) => prev.filter((x) => x.id !== c.id))
+      await api.serviceChecks.remove(confirmDelete.id)
+      setChecks((prev) => prev.filter((x) => x.id !== confirmDelete.id))
+      setConfirmDelete(null)
     } catch (e) {
       setError((e as Error).message || '删除失败')
     }
@@ -345,6 +351,18 @@ export default function ServiceChecks() {
           </CardContent>
         </Card>
       )}
+
+      {/* 删除确认 */}
+      <Dialog open={!!confirmDelete} onClose={() => setConfirmDelete(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>确认删除</DialogTitle>
+        <DialogContent>
+          确定要删除检查项「{confirmDelete?.name}」吗？
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfirmDelete(null)}>取消</Button>
+          <Button color="error" variant="contained" onClick={() => void doDelete()}>删除</Button>
+        </DialogActions>
+      </Dialog>
 
       {/* 新建 / 编辑 */}
       <Dialog open={open} onClose={() => setOpen(false)} maxWidth="sm" fullWidth>

@@ -18,7 +18,7 @@ usersRouter.post('/', requireUser, requireAdmin, asyncHandler(async (req, res) =
   const uname = username.trim()
   if (!uname || !password) return fail(res, 400, 'username 与 password 必填')
   if (uname.length > 64 || /[\r\n]/.test(uname)) return fail(res, 400, '用户名长度不能超过 64 且不能包含换行')
-  if (password.length < 6) return fail(res, 400, '密码至少 6 位')
+  if (password.length < 8) return fail(res, 400, '密码至少 8 位')
   if (password.length > 1024) return fail(res, 400, '密码长度不能超过 1024 位')
   if (displayName !== undefined && (typeof displayName !== 'string' || !displayName.trim() || displayName.trim().length > 100)) {
     return fail(res, 400, '显示名长度需为 1 到 100 个字符')
@@ -53,7 +53,7 @@ usersRouter.put('/:id', requireUser, requireAdmin, asyncHandler(async (req, res)
   if (role === 'admin' || role === 'personal') patch.role = role as UserRole
   if (password) {
     if (typeof password !== 'string') return fail(res, 400, '密码必须是字符串')
-    if (password.length < 6) return fail(res, 400, '密码至少 6 位')
+    if (password.length < 8) return fail(res, 400, '密码至少 8 位')
     if (password.length > 1024) return fail(res, 400, '密码长度不能超过 1024 位')
     patch.passwordHash = hashPassword(password)
   }

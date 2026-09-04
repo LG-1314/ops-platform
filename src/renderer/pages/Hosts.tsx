@@ -5,11 +5,6 @@ import {
   Paper,
   Typography,
   Button,
-  Table,
-  TableHead,
-  TableRow,
-  TableCell,
-  TableBody,
   IconButton,
   Dialog,
   DialogTitle,
@@ -22,10 +17,10 @@ import {
   Alert,
   CircularProgress,
   Tooltip,
-  LinearProgress,
   Divider,
+  Grid,
 } from '@mui/material'
-import { useTheme, type Theme } from '@mui/material/styles'
+import { useTheme } from '@mui/material/styles'
 import {
   Add as IconAdd,
   Delete as IconDelete,
@@ -39,17 +34,14 @@ import {
 } from '@mui/icons-material'
 import { api, ApiClientError } from '../../capabilities/bus'
 import type { Asset, HostMetricSample, Status } from '@shared/types'
+import DataTable, { type Column } from '../components/DataTable'
+import PageHeader from '../components/PageHeader'
+import MetricBar from '../components/MetricBar'
+import StatusBadge from '../components/StatusBadge'
 import HostTrendDrawer from '../components/HostTrendDrawer'
 import TerminalDialog from '../components/TerminalDialog'
 import AiDialog from '../components/AiDialog'
 import type { MonitorSummary } from '../../capabilities/bus'
-
-function statusColor(theme: Theme, s: Status): string {
-  if (s === 'ok') return theme.palette.success.main
-  if (s === 'warn') return theme.palette.warning.main
-  if (s === 'error') return theme.palette.error.main
-  return theme.palette.text.secondary
-}
 
 function assetDisplayStatus(host: Asset): { status: Status; label: string; reason?: string } {
   if (host.reachable === false) {
@@ -61,34 +53,6 @@ function assetDisplayStatus(host: Asset): { status: Status; label: string; reaso
   if (host.status === 'error') return { status: 'error', label: '连接失败', reason: host.statusReason }
   if (host.status === 'warn') return { status: 'warn', label: '在线异常', reason: host.statusReason }
   return { status: 'ok', label: '在线', reason: host.statusReason }
-}
-
-function MetricBar({ label, pct, theme }: { label: string; pct: number; theme: Theme }) {
-  const color = pct >= 90 ? theme.palette.error.main : pct >= 75 ? theme.palette.warning.main : theme.palette.success.main
-  return (
-    <Box sx={{ mb: 1.5 }}>
-      <Stack direction="row" justifyContent="space-between" sx={{ mb: 0.5 }}>
-        <Typography variant="body2">{label}</Typography>
-        <Typography variant="body2" sx={{ fontFamily: 'monospace', color }}>
-          {pct}%
-        </Typography>
-      </Stack>
-      <LinearProgress variant="determinate" value={pct} sx={{ height: 6, borderRadius: 3, '& .MuiLinearProgress-bar': { backgroundColor: color } }} />
-    </Box>
-  )
-}
-
-/** 表格内紧凑指标条（实时指标列用） */
-function MiniBar({ label, pct, theme }: { label: string; pct?: number; theme: Theme }) {
-  if (pct == null) return null
-  const color = pct >= 90 ? theme.palette.error.main : pct >= 75 ? theme.palette.warning.main : theme.palette.success.main
-  return (
-    <Stack direction="row" alignItems="center" spacing={0.6} sx={{ minWidth: 96 }}>
-      <Typography variant="caption" color="text.secondary" sx={{ width: 34, fontSize: 10, flexShrink: 0 }}>{label}</Typography>
-      <LinearProgress variant="determinate" value={pct} sx={{ flex: 1, height: 4, borderRadius: 2, '& .MuiLinearProgress-bar': { backgroundColor: color } }} />
-      <Typography variant="caption" sx={{ width: 34, fontSize: 10, fontFamily: 'monospace', color, textAlign: 'right', flexShrink: 0 }}>{pct}%</Typography>
-    </Stack>
-  )
 }
 
 export default function Hosts() {
@@ -277,34 +241,125 @@ export default function Hosts() {
     }
   }
 
+  const columns: Column<Asset>[] = [
+    {
+      key: 'name',
+      label: '名称',
+      render: (h) => (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <IconHost fontSize="small" sx={{ color: theme.palette.primary.main }} />
+          <Typography variant="body2" sx={{ fontWeight: 600 }}>{h.name}</Typography>
+        </Box>
+      ),
+    },
+    {
+      key: 'host',
+      label: '地址',
+      render: (h) => <Typography variant="body2" sx={{ fontFamily: 'var(--font-mono)' }}>{h.host}:{h.port ?? 22}</Typography>,
+    },
+    {
+      key: '__metrics',
+      label: '实时指标',
+      render: (h) => {
+        const m = metricMap.get(h.id)
+        return m ? (
+          <Stack spacing={0.4}>
+            <MetricBar label="CPU" pct={m.cpuPct} compact />
+            <MetricBar label="内存" pct={m.memPct} compact />
+            <MetricBar label="磁盘" pct={m.diskPct} compact />
+          </Stack>
+        ) : (
+          <Typography variant="caption" color="text.secondary">未采集</Typography>
+        )
+      },
+    },
+    {
+      key: 'credentialId',
+      label: '凭据',
+      render: (h) => h.credentialId ? '已关联' : '无',
+    },
+    {
+      key: '__status',
+      label: '状态',
+      render: (h) => {
+        const ds = assetDisplayStatus(h)
+        return (
+          <Tooltip title={ds.reason || ''}>
+            <span>
+              <StatusBadge status={ds.status} label={ds.label} />
+            </span>
+          </Tooltip>
+        )
+      },
+    },
+    {
+      key: '__actions',
+      label: '操作',
+      render: (h) => (
+        <Stack direction="row" spacing={0.5} alignItems="center">
+          <Tooltip title="AI 诊断建议">
+            <IconButton size="small" onClick={() => setAiHost(h)}>
+              <IconAi fontSize="small" color="primary" />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="趋势">
+            <IconButton size="small" onClick={() => setTrendAsset(h)}>
+              <IconTrend fontSize="small" />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title={h.credentialId ? '采集指标' : '未配置 SSH 凭据'}>
+            <span>
+              <IconButton size="small" onClick={() => void onCollect(h)} disabled={collectingId === h.id || !h.credentialId}>
+                {collectingId === h.id ? <CircularProgress size={16} /> : <IconCollect fontSize="small" />}
+              </IconButton>
+            </span>
+          </Tooltip>
+          <Tooltip title={h.credentialId ? '服务检查' : '未配置 SSH 凭据'}>
+            <span>
+              <IconButton size="small" onClick={() => void openServices(h)} disabled={!h.credentialId}>
+                <IconServices fontSize="small" />
+              </IconButton>
+            </span>
+          </Tooltip>
+          <Tooltip title="终端">
+            <IconButton size="small" onClick={() => goTerminal(h)}>
+              <IconTerminal fontSize="small" />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="删除">
+            <IconButton size="small" onClick={() => askDelete(h.id, h.name)}>
+              <IconDelete fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        </Stack>
+      ),
+    },
+  ]
+
   return (
     <Box>
-      <Stack direction="row" justifyContent="space-between" alignItems="center" mb={2}>
-        <Box>
-          <Typography variant="h5" sx={{ fontWeight: 700 }}>
-            主机监控
-          </Typography>
-          <Typography variant="body2" sx={{ color: theme.palette.text.secondary }}>
-            添加主机并经由 SSH 采集 CPU / 内存 / 磁盘 / 负载指标，一键进入终端
-          </Typography>
-        </Box>
-        <Stack direction="row" spacing={1}>
-          <Button startIcon={<IconRefresh />} onClick={() => void load()} color="inherit">
-            刷新
-          </Button>
-          <Button
-            startIcon={collectingAll ? <CircularProgress size={16} /> : <IconCollect />}
-            onClick={() => void onCollectAll()}
-            disabled={collectingAll}
-            color="inherit"
-          >
-            {collectingAll ? '采集中…' : '采集全部'}
-          </Button>
-          <Button variant="contained" startIcon={<IconAdd />} onClick={() => setOpen(true)}>
-            添加主机
-          </Button>
-        </Stack>
-      </Stack>
+      <PageHeader
+        title="主机监控"
+        subtitle="添加主机并经由 SSH 采集 CPU / 内存 / 磁盘 / 负载指标，一键进入终端"
+        actions={
+          <>
+            <Button startIcon={<IconRefresh />} onClick={() => void load()} color="inherit">
+              刷新
+            </Button>
+            <Button
+              startIcon={collectingAll ? <CircularProgress size={16} /> : <IconCollect />}
+              onClick={() => void onCollectAll()}
+              disabled={collectingAll}
+              color="inherit"
+            >
+              {collectingAll ? '采集中…' : '采集全部'}
+            </Button>
+            <Button variant="contained" startIcon={<IconAdd />} onClick={() => setOpen(true)}>
+              添加主机
+            </Button>
+          </>
+        }
+      />
 
       {error && (
         <Alert severity="error" sx={{ mb: 2 }}>
@@ -318,162 +373,89 @@ export default function Hosts() {
             <CircularProgress size={28} />
           </Box>
         ) : (
-          <Table>
-            <TableHead>
-              <TableRow>
-                <TableCell>名称</TableCell>
-                <TableCell>地址</TableCell>
-                <TableCell>实时指标</TableCell>
-                <TableCell>凭据</TableCell>
-                <TableCell>状态</TableCell>
-                <TableCell align="right">操作</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {hosts.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={6} sx={{ color: theme.palette.text.secondary }}>
-                    暂无主机，点击「添加主机」开始纳管。
-                  </TableCell>
-                </TableRow>
-              )}
-              {hosts.map((h) => {
-                const m = metricMap.get(h.id)
-                const displayStatus = assetDisplayStatus(h)
-                return (
-                  <TableRow key={h.id} sx={{ opacity: h.reachable === false ? 0.68 : 1 }}>
-                    <TableCell sx={{ fontWeight: 600 }}>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <IconHost fontSize="small" sx={{ color: theme.palette.primary.main }} />
-                        {h.name}
-                      </Box>
-                    </TableCell>
-                    <TableCell sx={{ fontFamily: 'monospace' }}>
-                      {h.host}:{h.port ?? 22}
-                    </TableCell>
-                    <TableCell sx={{ py: 0.5 }}>
-                      {m ? (
-                        <Stack spacing={0.4}>
-                          <MiniBar label="CPU" pct={m.cpuPct} theme={theme} />
-                          <MiniBar label="内存" pct={m.memPct} theme={theme} />
-                          <MiniBar label="磁盘" pct={m.diskPct} theme={theme} />
-                        </Stack>
-                      ) : (
-                        <Typography variant="caption" color="text.secondary">未采集</Typography>
-                      )}
-                    </TableCell>
-                    <TableCell>{h.credentialId ? '已关联' : '无'}</TableCell>
-                    <TableCell>
-                      <Tooltip title={displayStatus.reason || ''}>
-                        <span>
-                          <StatusBadgeInline s={displayStatus.status} label={displayStatus.label} theme={theme} />
-                        </span>
-                      </Tooltip>
-                    </TableCell>
-                    <TableCell align="right">
-                      <Tooltip title="AI 诊断建议">
-                        <IconButton size="small" onClick={() => setAiHost(h)}>
-                          <IconAi fontSize="small" color="primary" />
-                        </IconButton>
-                      </Tooltip>
-                      <Tooltip title="趋势">
-                        <IconButton size="small" onClick={() => setTrendAsset(h)}>
-                          <IconTrend fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                      <Tooltip title={h.credentialId ? '采集指标' : '未配置 SSH 凭据'}>
-                        <span>
-                          <IconButton size="small" onClick={() => void onCollect(h)} disabled={collectingId === h.id || !h.credentialId}>
-                            {collectingId === h.id ? <CircularProgress size={16} /> : <IconCollect fontSize="small" />}
-                          </IconButton>
-                        </span>
-                      </Tooltip>
-                      <Tooltip title={h.credentialId ? '服务检查' : '未配置 SSH 凭据'}>
-                        <span>
-                          <IconButton size="small" onClick={() => void openServices(h)} disabled={!h.credentialId}>
-                            <IconServices fontSize="small" />
-                          </IconButton>
-                        </span>
-                      </Tooltip>
-                      <Tooltip title="终端">
-                        <IconButton size="small" onClick={() => goTerminal(h)}>
-                          <IconTerminal fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                      <Tooltip title="删除">
-                        <IconButton size="small" onClick={() => askDelete(h.id, h.name)}>
-                          <IconDelete fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                    </TableCell>
-                  </TableRow>
-                )
-              })}
-            </TableBody>
-          </Table>
+          <DataTable columns={columns} rows={hosts} emptyText="暂无主机，点击「添加主机」开始纳管。" />
         )}
       </Paper>
 
       {/* 添加主机 */}
-      <Dialog open={open} onClose={() => setOpen(false)} maxWidth="xs" fullWidth>
+      <Dialog open={open} onClose={() => setOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle>添加主机</DialogTitle>
         <DialogContent>
-          <Stack spacing={2} sx={{ mt: 1 }}>
-            <TextField
-              label="名称"
-              fullWidth
-              value={form.name}
-              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-            />
-            <TextField
-              label="主机地址"
-              fullWidth
-              value={form.host}
-              onChange={(e) => setForm((f) => ({ ...f, host: e.target.value }))}
-              placeholder="192.168.1.10 或 hostname"
-            />
-            <TextField
-              label="SSH 端口"
-              type="number"
-              fullWidth
-              value={form.port}
-              onChange={(e) => setForm((f) => ({ ...f, port: Number(e.target.value) }))}
-            />
-            <TextField
-              label="用户名"
-              fullWidth
-              value={form.username}
-              onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))}
-            />
-            <TextField
-              label="认证方式"
-              select
-              fullWidth
-              value={form.authMethod}
-              onChange={(e) => setForm((f) => ({ ...f, authMethod: e.target.value as 'password' | 'privateKey' }))}
-            >
-              <MenuItem value="password">密码</MenuItem>
-              <MenuItem value="privateKey">私钥</MenuItem>
-            </TextField>
-            {form.authMethod === 'password' ? (
+          <Grid container spacing={2} sx={{ mt: 0.5 }}>
+            <Grid item xs={12} sm={6}>
               <TextField
-                label="密码"
-                type="password"
+                label="名称"
                 fullWidth
-                value={form.password}
-                onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
+                size="small"
+                value={form.name}
+                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
               />
-            ) : (
+            </Grid>
+            <Grid item xs={12} sm={6}>
               <TextField
-                label="私钥 (PEM)"
-                multiline
-                minRows={4}
+                label="主机地址"
                 fullWidth
-                value={form.privateKey}
-                onChange={(e) => setForm((f) => ({ ...f, privateKey: e.target.value }))}
+                size="small"
+                value={form.host}
+                onChange={(e) => setForm((f) => ({ ...f, host: e.target.value }))}
+                placeholder="192.168.1.10 或 hostname"
               />
-            )}
-          </Stack>
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                label="SSH 端口"
+                type="number"
+                fullWidth
+                size="small"
+                value={form.port}
+                onChange={(e) => setForm((f) => ({ ...f, port: Number(e.target.value) }))}
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                label="用户名"
+                fullWidth
+                size="small"
+                value={form.username}
+                onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))}
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                label="认证方式"
+                select
+                fullWidth
+                size="small"
+                value={form.authMethod}
+                onChange={(e) => setForm((f) => ({ ...f, authMethod: e.target.value as 'password' | 'privateKey' }))}
+              >
+                <MenuItem value="password">密码</MenuItem>
+                <MenuItem value="privateKey">私钥</MenuItem>
+              </TextField>
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              {form.authMethod === 'password' ? (
+                <TextField
+                  label="密码"
+                  type="password"
+                  fullWidth
+                  size="small"
+                  value={form.password}
+                  onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
+                />
+              ) : (
+                <TextField
+                  label="私钥 (PEM)"
+                  multiline
+                  minRows={3}
+                  fullWidth
+                  size="small"
+                  value={form.privateKey}
+                  onChange={(e) => setForm((f) => ({ ...f, privateKey: e.target.value }))}
+                />
+              )}
+            </Grid>
+          </Grid>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setOpen(false)}>取消</Button>
@@ -516,13 +498,12 @@ export default function Hosts() {
               )}
               <Divider />
               {typeof sample.cpuIdle === 'number' && (
-                <MetricBar label="CPU 使用率" pct={Math.max(0, Math.round(100 - sample.cpuIdle))} theme={theme} />
+                <MetricBar label="CPU 使用率" pct={Math.max(0, Math.round(100 - sample.cpuIdle))} />
               )}
               {sample.memTotalMb && sample.memUsedMb != null ? (
                 <MetricBar
                   label={`内存使用率 (${sample.memUsedMb}/${sample.memTotalMb} MB)`}
                   pct={Math.round((sample.memUsedMb / sample.memTotalMb) * 100)}
-                  theme={theme}
                 />
               ) : null}
               <Typography variant="body2" sx={{ mt: 1 }}>
@@ -533,7 +514,7 @@ export default function Hosts() {
                 磁盘
               </Typography>
               {sample.disk.map((d, i) => (
-                <MetricBar key={i} label={`${d.mount} (${d.usedGb}/${d.totalGb} GB)`} pct={d.usedPct} theme={theme} />
+                <MetricBar key={i} label={`${d.mount} (${d.usedGb}/${d.totalGb} GB)`} pct={d.usedPct} />
               ))}
             </Stack>
           )}
@@ -586,39 +567,28 @@ export default function Hosts() {
           ) : svcError ? (
             <Alert severity="error">{svcError}</Alert>
           ) : (
-            <Table size="small">
-              <TableHead>
-                <TableRow>
-                  <TableCell>服务</TableCell>
-                  <TableCell>状态</TableCell>
-                  <TableCell>描述</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {(svcList ?? []).length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={3} sx={{ color: theme.palette.text.secondary }}>
-                      未采集到服务（目标主机可能非 systemd 环境）。
-                    </TableCell>
-                  </TableRow>
-                )}
-                {(svcList ?? []).map((s, i) => (
-                  <TableRow key={i} hover>
-                    <TableCell sx={{ fontWeight: 600, fontFamily: 'monospace' }}>{s.name}</TableCell>
-                    <TableCell>
-                      <Chip
-                        size="small"
-                        label={s.status}
-                        color={s.active ? 'success' : s.status.includes('failed') ? 'error' : 'default'}
-                        variant="outlined"
-                        sx={{ height: 20, fontSize: 11 }}
-                      />
-                    </TableCell>
-                    <TableCell sx={{ color: theme.palette.text.secondary }}>{s.description}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <DataTable
+              columns={[
+                { key: 'name', label: '服务', render: (s) => <Typography variant="body2" sx={{ fontWeight: 600, fontFamily: 'var(--font-mono)' }}>{s.name}</Typography> },
+                {
+                  key: 'status',
+                  label: '状态',
+                  render: (s) => (
+                    <Chip
+                      size="small"
+                      label={s.status}
+                      color={s.active ? 'success' : s.status.includes('failed') ? 'error' : 'default'}
+                      variant="outlined"
+                      sx={{ height: 20, fontSize: 11 }}
+                    />
+                  ),
+                },
+                { key: 'description', label: '描述', render: (s) => <Typography variant="body2" color="text.secondary">{s.description}</Typography> },
+              ]}
+              rows={svcList ?? []}
+              emptyText="未采集到服务（目标主机可能非 systemd 环境）。"
+              pageSize={0}
+            />
           )}
         </DialogContent>
         <DialogActions>
@@ -626,15 +596,5 @@ export default function Hosts() {
         </DialogActions>
       </Dialog>
     </Box>
-  )
-}
-
-function StatusBadgeInline({ s, label, theme }: { s: Status; label: string; theme: Theme }) {
-  return (
-    <Chip
-      size="small"
-      label={label}
-      sx={{ bgcolor: statusColor(theme, s) + '22', color: statusColor(theme, s), borderColor: statusColor(theme, s), border: '1px solid' }}
-    />
   )
 }

@@ -78,6 +78,8 @@ export default function Cloud() {
   const [submitting, setSubmitting] = useState(false)
   const [changes, setChanges] = useState<CloudChangeLog[]>([])
   const [onlyExpiring, setOnlyExpiring] = useState(false)
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [confirmDeleteName, setConfirmDeleteName] = useState('')
 
   const [form, setForm] = useState<{
     name: string
@@ -137,9 +139,16 @@ export default function Cloud() {
     setOpen(true)
   }
 
-  async function onDelete(id: string) {
+  function askDelete(id: string, name: string) {
+    setConfirmDeleteId(id)
+    setConfirmDeleteName(name)
+  }
+
+  async function doDelete() {
+    if (!confirmDeleteId) return
     try {
-      await api.cloud.remove(id)
+      await api.cloud.remove(confirmDeleteId)
+      setConfirmDeleteId(null)
       await load()
     } catch (e) {
       setError((e as Error).message)
@@ -279,7 +288,7 @@ export default function Cloud() {
                       </IconButton>
                     </Tooltip>
                     <Tooltip title="删除">
-                      <IconButton size="small" onClick={() => void onDelete(a.id)}>
+                      <IconButton size="small" onClick={() => askDelete(a.id, a.name)}>
                         <IconDelete fontSize="small" />
                       </IconButton>
                     </Tooltip>
@@ -343,6 +352,18 @@ export default function Cloud() {
           >
             保存
           </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* 删除确认 */}
+      <Dialog open={!!confirmDeleteId} onClose={() => setConfirmDeleteId(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>确认删除</DialogTitle>
+        <DialogContent>
+          确定要删除云账号「{confirmDeleteName}」吗？此操作不可恢复。
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfirmDeleteId(null)}>取消</Button>
+          <Button color="error" variant="contained" onClick={() => void doDelete()}>删除</Button>
         </DialogActions>
       </Dialog>
 

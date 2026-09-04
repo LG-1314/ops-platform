@@ -80,7 +80,7 @@ authRouter.post('/change-password', requireUser, asyncHandler(async (req, res) =
   const { oldPassword, newPassword } = req.body || {}
   if (typeof oldPassword !== 'string' || typeof newPassword !== 'string') return fail(res, 400, '密码必须是字符串')
   if (!oldPassword || !newPassword) return fail(res, 400, 'oldPassword 与 newPassword 必填')
-  if (newPassword.length < 6) return fail(res, 400, '新密码至少 6 位')
+  if (newPassword.length < 8) return fail(res, 400, '新密码至少 8 位')
   if (newPassword.length > 1024) return fail(res, 400, '新密码长度不能超过 1024 位')
   const user = (req as Request & { user?: SafeUser }).user
   const u = memoryStore.getUsers().find((x) => x.id === user?.id)

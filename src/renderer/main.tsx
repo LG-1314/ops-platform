@@ -7,6 +7,12 @@ import { ThemeModeProvider } from './state/ThemeModeProvider'
 import App from './App'
 import ErrorBoundary from './components/ErrorBoundary'
 
+// 加载 JetBrains Mono 等宽字体（设计规范要求用于数值/指标展示）
+const fontLink = document.createElement('link')
+fontLink.rel = 'stylesheet'
+fontLink.href = 'https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap'
+document.head.appendChild(fontLink)
+
 // file:// 加载 + webSecurity:false 时，emotion 的 speedy 模式（insertRule）可能因安全限制失败，
 // 导致 MUI 样式完全不生效 → 主内容区组件无样式、加载态 spinner 不可见 → 视觉黑屏。
 // 强制 speedy:false 改用 <style> 文本注入，100% 可靠；prepend 等价于 injectFirst。

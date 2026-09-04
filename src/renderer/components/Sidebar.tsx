@@ -8,6 +8,7 @@ import {
   Toolbar,
   IconButton,
   Divider,
+  useMediaQuery,
 } from '@mui/material'
 import {
   Dashboard as IconDashboard,
@@ -61,7 +62,7 @@ function navColors(dark: boolean) {
         bg: '#FFFFFF',
         fg: '#1F2937',
         text: '#4B5563',
-        textMuted: '#9CA3AF',
+        textMuted: '#6B7280',
         activeBg: 'rgba(46,107,230,0.12)',
         activeText: '#1E54C4',
         activeIcon: '#2E6BE6',
@@ -79,7 +80,7 @@ interface NavItem {
 }
 
 // 导航按业务逻辑分组（总览 → 资源 → 操作 → 知识 → 系统），顺序即侧边栏展示顺序。
-const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
+export const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
   {
     title: '总览',
     items: [
@@ -142,6 +143,7 @@ export default function Sidebar({ open, onToggle }: Props) {
   const role = useUserRole()
   const theme = useTheme()
   const c = navColors(theme.palette.mode === 'dark')
+  const isMobile = useMediaQuery(theme.breakpoints.down('md'))
   // 过滤每个分组的可见项（缺省全可见，标注 roles 的按角色过滤），隐藏空分组
   const groups = NAV_GROUPS.map((g) => ({
     ...g,
@@ -150,7 +152,10 @@ export default function Sidebar({ open, onToggle }: Props) {
 
   return (
     <Drawer
-      variant="permanent"
+      variant={isMobile ? 'temporary' : 'permanent'}
+      open={isMobile ? open : true}
+      onClose={onToggle}
+      ModalProps={{ keepMounted: true }}
       sx={{
         width: open ? DRAWER_WIDTH : DRAWER_COLLAPSED,
         flexShrink: 0,

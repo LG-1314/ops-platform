@@ -25,3 +25,17 @@ export const STATUS_LABEL: Record<Status, string> = {
 
 // 局部类型，避免本文件反向依赖 shared/types 造成循环（常量文件应保持零业务依赖）
 type Status = 'ok' | 'warn' | 'error' | 'unknown'
+
+// —— 指标阈值 ——
+/** 指标使用率阈值：超此值视为危险（红色） */
+export const THRESHOLD_DANGER = 90
+/** 指标使用率阈值：超此值视为警告（黄色） */
+export const THRESHOLD_WARNING = 75
+
+// —— 刷新间隔（毫秒） ——
+/** 告警轮询间隔 */
+export const REFRESH_ALERT_MS = 15_000
+/** 监控大盘自动刷新间隔 */
+export const REFRESH_MONITOR_MS = 30_000
+/** 资产列表自动刷新间隔 */
+export const REFRESH_ASSETS_MS = 15_000

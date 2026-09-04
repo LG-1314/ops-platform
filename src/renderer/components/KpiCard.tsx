@@ -1,5 +1,6 @@
 import { Card, CardContent, Typography, Box, useTheme } from '@mui/material'
 import type { ReactNode } from 'react'
+import { memo } from 'react'
 
 interface Props {
   title: string
@@ -9,7 +10,7 @@ interface Props {
   color?: string
 }
 
-export default function KpiCard({
+function KpiCardInner({
   title,
   value,
   sub,
@@ -52,26 +53,29 @@ export default function KpiCard({
               </Typography>
             )}
           </Box>
-            {icon && (
-              <Box
-                sx={{
-                  color: iconColor,
-                  width: 44,
-                  height: 44,
-                  borderRadius: 2,
-                  bgcolor: `${iconColor}1A`,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  flexShrink: 0,
-                  '& .MuiSvgIcon-root': { fontSize: 24 },
-                }}
-              >
-                {icon}
-              </Box>
-            )}
+          {icon && (
+            <Box
+              sx={{
+                color: iconColor,
+                width: 44,
+                height: 44,
+                borderRadius: 2,
+                bgcolor: `${iconColor}1A`,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+                '& .MuiSvgIcon-root': { fontSize: 24 },
+              }}
+            >
+              {icon}
+            </Box>
+          )}
         </Box>
       </CardContent>
     </Card>
   )
 }
+
+const KpiCard = memo(KpiCardInner)
+export default KpiCard

@@ -62,7 +62,7 @@ aiRouter.post('/agent-chat', requireUser, asyncHandler(async (req, res) => {
   } catch (e) {
     const msg = (e as Error).message
     logger.error(`[ai] agent-chat failed: ${msg}`)
-    fail(res, 502, msg)
+    fail(res, 502, '智能体对话失败，请检查模型配置后重试')
   }
 }))
 
@@ -87,7 +87,7 @@ aiRouter.post('/config/test', requireUser, asyncHandler(async (_req, res) => {
   try {
     ok(res, await testConnection())
   } catch (e) {
-    fail(res, 502, '连接失败', (e as Error).message)
+    fail(res, 502, '连接失败', '请检查 API 地址与密钥配置')
   }
 }))
 
@@ -107,7 +107,7 @@ aiRouter.post('/chat', requireUser, asyncHandler(async (req, res) => {
   } catch (e) {
     const msg = (e as Error).message
     logger.error(`[ai] chat failed: ${msg}`)
-    fail(res, 502, msg)
+    fail(res, 502, 'AI 对话请求失败，请检查模型配置后重试')
   }
 }))
 
@@ -118,7 +118,7 @@ aiRouter.post('/qa', requireUser, asyncHandler(async (req, res) => {
   try {
     ok(res, { reply: await qa(b.question, b.related) })
   } catch (e) {
-    fail(res, 502, (e as Error).message)
+    fail(res, 502, 'AI 问答请求失败，请检查模型配置后重试')
   }
 }))
 
@@ -127,7 +127,7 @@ aiRouter.post('/report', requireUser, asyncHandler(async (_req, res) => {
   try {
     ok(res, { report: await generateReport() })
   } catch (e) {
-    fail(res, 502, (e as Error).message)
+    fail(res, 502, '报告生成失败，请检查模型配置后重试')
   }
 }))
 
@@ -139,6 +139,6 @@ aiRouter.post('/analyze-host', requireUser, asyncHandler(async (req, res) => {
   try {
     ok(res, { reply: await analyzeHostMetrics(asset) })
   } catch (e) {
-    fail(res, 502, (e as Error).message)
+    fail(res, 502, '主机分析失败，请检查模型配置后重试')
   }
 }))

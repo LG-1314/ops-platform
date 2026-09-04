@@ -3,18 +3,17 @@ import type { ReactNode } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { Box, CircularProgress, Typography } from '@mui/material'
 import Layout from './components/Layout'
+import { NAV_GROUPS } from './components/Sidebar'
 // 默认路由（仪表盘）同步导入：避免从 file:// 加载时 lazy chunk 失败导致首屏黑屏
 import Dashboard from './pages/Dashboard'
 import Login from './pages/Login'
 import { useUserRole, useIsLoggedIn, clearSession } from './state/userRole'
 import { onUnauthorized } from '../capabilities/bus'
 
-// 管理员专属路由：个人用户访问时重定向回仪表盘
-const ADMIN_ONLY = [
-  '/diagnostics', '/knowledge', '/relations', '/assets', '/patrols',
-  '/automation', '/clusters', '/databases', '/cloud', '/ops-tools', '/users',
-  '/firewall', '/service-checks',
-]
+// 从导航配置自动提取管理员专属路径，避免两处独立维护
+const ADMIN_ONLY = NAV_GROUPS.flatMap((g) =>
+  g.items.filter((i) => i.roles?.includes('admin')).map((i) => i.to)
+)
 
 // 其余路由级懒加载：减小非默认页面 JS 体积，按需拉取 chunk。
 const Diagnostics = lazy(() => import('./pages/Diagnostics'))

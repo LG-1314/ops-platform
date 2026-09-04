@@ -130,7 +130,7 @@ export default function Settings() {
     api.notificationChannels
       .list()
       .then(setChannels)
-      .catch(() => {})
+      .catch((e) => console.warn('[settings] 通知渠道加载失败:', e))
     void loadAiConfig()
   }, [])
 
