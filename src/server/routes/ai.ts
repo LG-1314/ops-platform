@@ -33,7 +33,7 @@ aiRouter.post('/agents', requireUser, asyncHandler(async (req, res) => {
   try {
     ok(res, createAgent(req.body as Partial<import('@shared/types').AiAgent>))
   } catch (e) {
-    fail(res, 400, (e as Error).message)
+    fail(res, 400, '智能体操作失败')
   }
 }))
 
