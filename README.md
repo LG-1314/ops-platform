@@ -112,6 +112,9 @@ Express 能力总线 (src/server, 默认端口 8787)
 - 崩溃日志：`ops-platform-crash.log`
 - 能力总线运行日志：`logs\ops-YYYY-MM-DD.log`
 - 数据持久化：`store.json`、`metrics.json`、`health.json`、`audit.json`
+- 重置账号提示：`store.json` 损坏时会自动尝试同名 `.bak` 备份恢复。
+  因此如需手动重置为初始账号（admin/admin123），请**先完全退出应用**，
+  再同时删除 `store.json` 与 `store.json.bak`，重新打开即可。
 
 ## 环境变量
 
