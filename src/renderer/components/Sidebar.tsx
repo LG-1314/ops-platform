@@ -6,8 +6,10 @@ import {
   ListItemIcon,
   ListItemText,
   Toolbar,
+  Typography,
   IconButton,
   Divider,
+  Tooltip,
   useMediaQuery,
 } from '@mui/material'
 import {
@@ -177,7 +179,8 @@ export default function Sidebar({ open, onToggle }: Props) {
           gap: 1,
           px: open ? 2 : 0,
           justifyContent: open ? 'flex-start' : 'center',
-          minHeight: 64,
+          // 与 TopBar 的 AppBar Toolbar（默认 56px）对齐，Logo 行与顶栏底线齐平
+          minHeight: 56,
         }}
       >
         <Logo size={30} withText={open} />
@@ -195,35 +198,54 @@ export default function Sidebar({ open, onToggle }: Props) {
                 }}
               />
             )}
+            {/* 分组标题：NAV_GROUPS 定义了六个分组名，此前从未渲染，23 个菜单项只靠分割线分组 */}
+            {open && (
+              <Typography
+                variant="caption"
+                sx={{ px: 2, pt: 0.5, pb: 0.5, display: 'block', color: c.textMuted, fontWeight: 600, letterSpacing: 1 }}
+              >
+                {group.title}
+              </Typography>
+            )}
             <List disablePadding>
-              {group.items.map((item) => (
-                <ListItemButton
-                  key={item.to}
-                  component={NavLink}
-                  to={item.to}
-                  sx={{
-                    borderRadius: 2,
-                    mb: 0.5,
-                    justifyContent: open ? 'flex-start' : 'center',
-                    px: open ? 2 : 0,
-                    color: c.text,
-                    '&.active': {
-                      bgcolor: c.activeBg,
-                      color: c.activeText,
-                      fontWeight: 600,
-                      '& .MuiListItemIcon-root': { color: c.activeIcon },
-                    },
-                    '&:hover': { bgcolor: c.hoverBg, color: c.activeText },
-                  }}
-                >
-                  <ListItemIcon
-                    sx={{ color: 'inherit', minWidth: open ? 36 : 'auto' }}
+              {group.items.map((item) => {
+                const button = (
+                  <ListItemButton
+                    key={item.to}
+                    component={NavLink}
+                    to={item.to}
+                    sx={{
+                      borderRadius: 2,
+                      mb: 0.5,
+                      justifyContent: open ? 'flex-start' : 'center',
+                      px: open ? 2 : 0,
+                      color: c.text,
+                      '&.active': {
+                        bgcolor: c.activeBg,
+                        color: c.activeText,
+                        fontWeight: 600,
+                        '& .MuiListItemIcon-root': { color: c.activeIcon },
+                      },
+                      '&:hover': { bgcolor: c.hoverBg, color: c.activeText },
+                    }}
                   >
-                    {item.icon}
-                  </ListItemIcon>
-                  {open && <ListItemText primary={item.label} />}
-                </ListItemButton>
-              ))}
+                    <ListItemIcon
+                      sx={{ color: 'inherit', minWidth: open ? 36 : 'auto' }}
+                    >
+                      {item.icon}
+                    </ListItemIcon>
+                    {open && <ListItemText primary={item.label} />}
+                  </ListItemButton>
+                )
+                // 折叠态只显示图标，必须带 Tooltip 才可辨识
+                return open ? (
+                  button
+                ) : (
+                  <Tooltip key={item.to} title={item.label} placement="right">
+                    {button}
+                  </Tooltip>
+                )
+              })}
             </List>
           </Box>
         ))}

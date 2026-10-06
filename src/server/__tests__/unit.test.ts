@@ -1,12 +1,11 @@
+// 必须是第一个导入：在任何静态导入（firewallService → memoryStore 链）触达
+// 存储层之前锁定隔离数据目录，避免测试读写真实用户数据。
+import './setup-env'
+
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
-
-// 隔离数据目录，避免测试污染真实用户数据
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ops-test-'))
-process.env.OPS_DATA_DIR = tmp
 
 import { encrypt, decrypt, DecryptError } from '../utils/crypto'
 import { paginate } from '../utils/paginate'
@@ -139,6 +138,7 @@ test('alert-rules: 命中开单、重复评估去重、冷却期不重开', asyn
   const { memoryStore } = await import('../store/memoryStore')
   resetAlertCooldown()
   const rule = {
+    id: 'rule-test-cooldown', // 冷却表按 rule.id 建键，规则必须带稳定 id（与真实路由一致）
     name: '健康分阈值',
     enabled: true,
     scope: 'asset' as const,
@@ -740,8 +740,8 @@ test('dolores: memory-sync 会立即刷新主存储文件', async () => {
   const { flushStore } = await import('../store/memoryStore')
   const { readJSONFile } = await import('../store/persist')
   flushStore()
-  const storeFile = path.join(tmp, 'store.json')
-  fs.unlinkSync(storeFile)
+  const storeFile = path.join(process.env.OPS_DATA_DIR as string, 'store.json')
+  fs.rmSync(storeFile, { force: true })
   assert.equal(readJSONFile('store.json'), null)
   const run = doloresService.run('memory-sync')
   assert.equal(run.status, 'ok')
@@ -776,8 +776,8 @@ test('patrol: 已启用任务在匹配分钟执行且同一分钟不重复执行
   const at = new Date('2026-08-29T10:15:00Z')
   const task = patrolService.create({ id: 'scheduled-patrol-regression', name: '定时回归', cron: '* * * * *', enabled: true, layers: ['basic'] })
   try {
-    assert.equal(patrolService.runScheduled(at), 1)
-    assert.equal(patrolService.runScheduled(new Date(at.getTime() + 20_000)), 0)
+    assert.equal(await patrolService.runScheduled(at), 1)
+    assert.equal(await patrolService.runScheduled(new Date(at.getTime() + 20_000)), 0)
     assert.equal(memoryStore.getPatrols().find((x) => x.id === task.id)?.history.length, 1)
   } finally {
     memoryStore.removePatrol(task.id)
@@ -813,6 +813,11 @@ test('auth: 个人用户不能直接访问管理员资源接口', async () => {
   const address = server.address()
   assert.ok(address && typeof address !== 'string')
   const base = `http://127.0.0.1:${address.port}`
+  // 播种 admin 带 mustChangePassword（首登强制改密），本用例测的是 RBAC 视角，
+  // 先把它改为"已完成改密"，强制改密拦截由下一个用例单独覆盖
+  const adminUser = memoryStore.getUsers().find((x) => x.username === 'admin')
+  assert.ok(adminUser)
+  memoryStore.updateUser(adminUser.id, { mustChangePassword: false })
   const admin = login('admin', 'admin123')
   const personal = login('rbac-personal', 'personal123')
   assert.ok(admin && personal)
@@ -835,6 +840,60 @@ test('auth: 个人用户不能直接访问管理员资源接口', async () => {
     logout(admin.token)
     logout(personal.token)
     memoryStore.removeUser(personalId)
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+  }
+})
+
+// —— 首次登录强制改密：服务端硬约束（除 /api/auth/* 外全部 403） ——
+test('auth: 强制改密期间非 auth 接口一律 403，改密后恢复', async () => {
+  const { createServer } = await import('../index')
+  const { login, logout } = await import('../services/authService')
+  const { memoryStore } = await import('../store/memoryStore')
+  const userId = 'force-pwd-regression'
+  memoryStore.removeUser(userId)
+  memoryStore.addUser({
+    id: userId,
+    username: 'force-pwd',
+    displayName: '强制改密回归用户',
+    role: 'personal',
+    passwordHash: (await import('../services/authService')).hashPassword('initial123'),
+    createdAt: new Date().toISOString(),
+    mustChangePassword: true,
+  })
+
+  const server = createServer()
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()))
+  const address = server.address()
+  assert.ok(address && typeof address !== 'string')
+  const base = `http://127.0.0.1:${address.port}`
+  const session = login('force-pwd', 'initial123')
+  assert.ok(session)
+
+  try {
+    const blocked = await fetch(`${base}/api/alerts`, {
+      headers: { 'x-ops-user-token': session.token },
+    })
+    assert.equal(blocked.status, 403)
+    const blockedJson = (await blocked.json()) as { code: number; message: string }
+    assert.equal(blockedJson.code, 403)
+    assert.ok(blockedJson.message.includes('修改初始密码'))
+
+    // 改密接口本身放行
+    const changed = await fetch(`${base}/api/auth/change-password`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-ops-user-token': session.token },
+      body: JSON.stringify({ oldPassword: 'initial123', newPassword: 'changed456' }),
+    })
+    assert.equal(changed.status, 200)
+
+    // 改密后解除拦截
+    const allowed = await fetch(`${base}/api/alerts`, {
+      headers: { 'x-ops-user-token': session.token },
+    })
+    assert.equal(allowed.status, 200)
+  } finally {
+    logout(session.token)
+    memoryStore.removeUser(userId)
     await new Promise<void>((resolve) => server.close(() => resolve()))
   }
 })

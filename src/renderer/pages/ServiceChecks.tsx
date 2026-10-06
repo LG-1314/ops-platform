@@ -217,7 +217,7 @@ export default function ServiceChecks() {
       key: 'serviceName',
       label: '检测目标',
       render: (r) => (
-        <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+        <Typography variant="body2" sx={{ fontFamily: 'var(--font-mono)' }}>
           {r.checkType === 'port' ? `${assetName(r.assetId)}:${r.port}` : r.serviceName}
         </Typography>
       ),
@@ -415,7 +415,7 @@ export default function ServiceChecks() {
                 value={form.serviceName}
                 onChange={(e) => setForm((f) => ({ ...f, serviceName: e.target.value }))}
                 placeholder={form.checkType === 'systemd' ? 'nginx' : 'nginx'}
-                sx={{ fontFamily: 'monospace' }}
+                sx={{ fontFamily: 'var(--font-mono)' }}
               />
             )}
             <Stack direction="row" spacing={2}>

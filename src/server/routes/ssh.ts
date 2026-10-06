@@ -21,9 +21,10 @@ sshRouter.post('/collect', requireUser, requireAdmin, asyncHandler(async (req, r
   if (credentialId && !secret) return fail(res, 404, '凭据不存在或已被删除')
   if (!secret?.username) return fail(res, 400, '未配置 SSH 凭据：请先在资产/凭据管理中关联该主机的 SSH 账号')
   try {
+    // SSH 端口优先级：请求显式指定 > 凭据配置 > 默认 22。绝不使用 asset.port（那是探测端口）
     const sample = await collectMetrics({
       host,
-      port,
+      port: port ?? secret?.port,
       username: secret?.username,
       password: secret?.password,
       privateKey: secret?.privateKey,
@@ -65,6 +66,15 @@ sshRouter.post('/services', requireUser, requireAdmin, asyncHandler(async (req, 
     ok(res, services)
   } catch (e) {
     logger.error(`[ssh] services failed: ${e instanceof Error ? e.message : String(e)}`)
-    fail(res, 502, '服务检查失败，请检查主机 / 凭据 / 网络', (e as Error).message)
+    // 与 /collect 相同的分类脱敏；原始驱动错误（含主机名/端口/栈）只留服务端日志
+    const msg = (e as Error).message || ''
+    const detail = msg.includes('Authentication')
+      ? 'SSH 认证失败：用户名 / 密码 / 私钥不正确'
+      : /timed out|timeout/i.test(msg)
+        ? 'SSH 连接超时：目标主机不可达或防火墙拦截'
+        : /ENOTFOUND|EAI_AGAIN|ECONNREFUSED/i.test(msg)
+          ? '主机不可达 / 端口未开放'
+          : '服务检查失败'
+    fail(res, 502, '服务检查失败，请检查主机 / 凭据 / 网络', detail)
   }
 }))

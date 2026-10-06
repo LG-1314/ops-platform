@@ -56,11 +56,23 @@ export function buildTheme(mode: Mode = 'dark'): Theme {
     components: {
       MuiCssBaseline: {
         styleOverrides: {
+          // 注入设计规范承诺的 CSS 变量：--font-mono 此前从未定义，导致全站
+          // var(--font-mono) 静默失效回退 UI 字体（等宽数字体系整体失效的根因）。
+          ':root': {
+            '--font-ui': tokens.fontFamily.ui,
+            '--font-mono': tokens.fontFamily.mono,
+          },
           body: {
             backgroundColor: c.bg,
             color: c.text,
             fontFamily: tokens.fontFamily.ui,
           },
+          // 规范 §7「所有交互 focus-visible 可见环」的全局兜底
+          'a:focus-visible, button:focus-visible, [role="button"]:focus-visible, [tabindex]:focus-visible':
+            {
+              outline: `2px solid ${c.primary}`,
+              outlineOffset: 2,
+            },
           '@media (prefers-reduced-motion: reduce)': {
             '*': {
               animationDuration: '0.01ms !important',
@@ -116,12 +128,14 @@ export function buildTheme(mode: Mode = 'dark'): Theme {
             backgroundImage: 'none',
             border: `1px solid ${c.border}`,
             borderRadius: 8,
-            transition: 'border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease',
+            transition: 'border-color 0.2s ease, background-color 0.2s ease',
+            // 规范 §6.1：深色靠亮度递进分层而非阴影；浅色保留轻微投影
             '&:hover': {
               borderColor:
                 mode === 'dark' ? 'rgba(124,156,255,0.35)' : 'rgba(30,58,138,0.28)',
-              boxShadow: sh.md,
-              transform: 'translateY(-1px)',
+              ...(mode === 'dark'
+                ? { backgroundColor: c.panel2 }
+                : { boxShadow: sh.sm }),
             },
           },
         },
@@ -161,7 +175,6 @@ export function buildTheme(mode: Mode = 'dark'): Theme {
           root: {
             borderColor: c.border,
             fontSize: 14,
-            // 数值单元格：fontFamily var(--font-mono) + tabular-nums + 右对齐
           },
           head: {
             backgroundColor: c.panel2,
@@ -170,6 +183,8 @@ export function buildTheme(mode: Mode = 'dark'): Theme {
           },
           body: {
             color: c.text,
+            // 规范 §3：数据表内数字统一 tabular-nums，等宽列再叠加 var(--font-mono)
+            fontVariantNumeric: 'tabular-nums',
           },
         },
       },

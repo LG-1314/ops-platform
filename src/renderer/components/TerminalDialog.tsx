@@ -78,21 +78,33 @@ export default function TerminalDialog({ open, host, port, credentialId, name, o
   const fitRef = useRef<FitAddon | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const tokenRef = useRef<string>('')
+  // ResizeObserver 存 ref 而不是挂在 DOM 节点上：Dialog 卸载与 setTimeout 竞争时
+  // containerRef 可能已为 null，挂在 DOM 上的 observer 会漏 disconnect
+  const roRef = useRef<ResizeObserver | null>(null)
+  // 弹窗存活标记：getToken() await 期间弹窗关闭时，connect 不得再建孤儿连接
+  const aliveRef = useRef(false)
 
   // 打开时初始化 xterm 并自动连接
   useEffect(() => {
     if (!open) return
+    aliveRef.current = true
     setError(null)
     if (!host) {
       setConnState('idle')
       return
     }
-    // 确保容器已挂载后再初始化
+    // 确保容器已挂载后再初始化；容器未挂载则跳过本次连接（避免 WS 建立后无处写入）
     const t = setTimeout(() => {
+      if (!aliveRef.current) return
+      if (!containerRef.current) {
+        setError('终端容器尚未就绪，请关闭后重试')
+        return
+      }
       initTerm()
       void connect(host, port, credentialId, name)
     }, 30)
     return () => {
+      aliveRef.current = false
       clearTimeout(t)
       cleanup()
     }
@@ -137,7 +149,7 @@ export default function TerminalDialog({ open, host, port, credentialId, name, o
       }
     })
     ro.observe(containerRef.current)
-    ;(containerRef.current as HTMLElement & { __ro?: ResizeObserver }).__ro = ro
+    roRef.current = ro
   }
 
   const getToken = async (): Promise<string> => {
@@ -165,6 +177,7 @@ export default function TerminalDialog({ open, host, port, credentialId, name, o
     wsRef.current = null
 
     const token = await getToken()
+    if (!aliveRef.current) return // 弹窗已关闭，不再建连
     let userToken = ''
     try {
       userToken = localStorage.getItem(USER_TOKEN_KEY) || ''
@@ -211,7 +224,8 @@ export default function TerminalDialog({ open, host, port, credentialId, name, o
       }
     }
     ws.onclose = () => {
-      setConnState('closed')
+      // onerror 先于 onclose 触发：错误态不应被覆盖成"已断开"
+      setConnState((prev) => (prev === 'error' ? prev : 'closed'))
       term?.writeln('\r\n\x1b[90m[连接已关闭]\x1b[0m\r\n')
       if (wsRef.current === ws) wsRef.current = null
     }
@@ -231,8 +245,8 @@ export default function TerminalDialog({ open, host, port, credentialId, name, o
     }
     termRef.current = null
     fitRef.current = null
-    const ro = (containerRef.current as HTMLElement & { __ro?: ResizeObserver } | null)?.__ro
-    ro?.disconnect()
+    roRef.current?.disconnect()
+    roRef.current = null
     if (containerRef.current) {
       // 清空容器，避免 Dialog 复用残留 DOM
       containerRef.current.innerHTML = ''

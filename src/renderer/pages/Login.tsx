@@ -69,8 +69,8 @@ export default function Login() {
 
   const submitChange = async () => {
     setChangeError('')
-    if (newPwd.length < 6) {
-      setChangeError('新密码至少 6 位')
+    if (newPwd.length < 8) {
+      setChangeError('新密码至少 8 位')
       return
     }
     if (newPwd !== confirmPwd) {
@@ -173,7 +173,7 @@ export default function Login() {
           <Stack spacing={2}>
             {changeError && <MuiAlert severity="error">{changeError}</MuiAlert>}
             <TextField
-              label="新密码（至少 6 位）"
+              label="新密码（至少 8 位）"
               type="password"
               size="small"
               value={newPwd}

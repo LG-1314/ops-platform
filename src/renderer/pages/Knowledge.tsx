@@ -28,6 +28,7 @@ import type { KnowledgeHit } from '@shared/types'
 import PageHeader from '../components/PageHeader'
 import EmptyState from '../components/EmptyState'
 import KnowledgeContent, { AssetChips } from '../components/KnowledgeContent'
+import ConfirmDialog from '../components/ConfirmDialog'
 
 /** 把检索词拆成高亮关键词（去空、去重、取最长前 8 个） */
 function splitKeywords(q: string): string[] {
@@ -72,6 +73,8 @@ export default function Knowledge() {
   const [editId, setEditId] = useState<string | null>(null)
   const [form, setForm] = useState({ title: '', content: '', tags: '' })
   const [saving, setSaving] = useState(false)
+  // 删除确认（此前单击删除图标立即执行，与其他页面不一致）
+  const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null)
 
   const search = async (query?: string) => {
     const keyword = (query ?? q).trim()
@@ -126,10 +129,12 @@ export default function Knowledge() {
 
   const closeDetail = () => setDetail(null)
 
-  // 从顶栏全局搜索跳转而来（/knowledge?q=xxx）时，自动预填并检索
+  // 从顶栏全局搜索跳转而来（/knowledge?q=xxx）时，同步输入框/高亮词并自动检索。
+  // 此前只检索不同步 q，已在本页时顶栏再搜会"结果更新但输入框和高亮仍是旧词"。
   useEffect(() => {
     const initial = searchParams.get('q')
     if (initial && initial.trim()) {
+      setQ(initial)
       search(initial)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -172,6 +177,7 @@ export default function Knowledge() {
   }
 
   const onRemove = async (id: string) => {
+    setConfirmRemoveId(null)
     setLibError('')
     try {
       await api.knowledge.remove(id)
@@ -376,7 +382,7 @@ export default function Knowledge() {
                       <Chip size="small" label={k.source} variant="outlined" />
                       {!k.id.startsWith('kb-') && (
                         <Tooltip title="删除该知识">
-                          <IconButton size="small" color="error" onClick={() => onRemove(k.id)}>
+                          <IconButton size="small" color="error" onClick={() => setConfirmRemoveId(k.id)}>
                             <IconDelete fontSize="small" />
                           </IconButton>
                         </Tooltip>
@@ -485,6 +491,15 @@ export default function Knowledge() {
           <Button onClick={closeDetail}>关闭</Button>
         </DialogActions>
       </Dialog>
+
+      {/* 删除确认 */}
+      <ConfirmDialog
+        open={!!confirmRemoveId}
+        title="删除知识"
+        content="确定删除这条自维护知识吗？删除后不可恢复。"
+        onConfirm={() => confirmRemoveId && void onRemove(confirmRemoveId)}
+        onClose={() => setConfirmRemoveId(null)}
+      />
     </Box>
   )
 }

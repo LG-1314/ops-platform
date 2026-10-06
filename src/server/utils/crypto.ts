@@ -56,20 +56,16 @@ function getKey(): Buffer {
   return cachedKey
 }
 
-/** 加密明文字符串，返回 base64(iv|tag|cipher)。空串直接返回空。 */
+/** 加密明文字符串，返回 base64(iv|tag|cipher)。空串直接返回空。
+ *  加密失败必须抛错而非返回空串：调用方会把返回值当密文落盘，静默空串等于
+ *  无声销毁凭据（比如密钥读取瞬时异常时把真实密码覆盖成 ''）。 */
 export function encrypt(plain: string): string {
   if (!plain) return ''
-  try {
-    const iv = crypto.randomBytes(12)
-    const cipher = crypto.createCipheriv(ALGO, getKey(), iv)
-    const enc = Buffer.concat([cipher.update(plain, 'utf8'), cipher.final()])
-    const tag = cipher.getAuthTag()
-    return Buffer.concat([iv, tag, enc]).toString('base64')
-  } catch (e) {
-    // 仅在密钥不可写时抛出（见 getKey），其余异常不吞
-    if (e instanceof Error && e.message.includes('密钥写盘失败')) throw e
-    return ''
-  }
+  const iv = crypto.randomBytes(12)
+  const cipher = crypto.createCipheriv(ALGO, getKey(), iv)
+  const enc = Buffer.concat([cipher.update(plain, 'utf8'), cipher.final()])
+  const tag = cipher.getAuthTag()
+  return Buffer.concat([iv, tag, enc]).toString('base64')
 }
 
 /** 解密 base64(iv|tag|cipher) 回明文；密文损坏/key 不符抛 DecryptError（不再静默返回空）。 */

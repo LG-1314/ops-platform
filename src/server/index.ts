@@ -4,7 +4,7 @@ import path from 'node:path'
 import http from 'node:http'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { DEFAULT_PORT } from '@shared/constants'
-import { requireWriteToken, getToken } from './auth'
+import { requireWriteToken, getToken, safeTokenEqual } from './auth'
 import { assetsRouter } from './routes/assets'
 import { diagnosticsRouter } from './routes/diagnostics'
 import { dashboardRouter } from './routes/dashboard'
@@ -79,8 +79,18 @@ export function createServer(): http.Server {
   // 健康检查
   app.get('/api/health', (_req, res) => ok(res, { ok: true }))
 
-  // 运行指标（供监控/巡检使用）
-  app.get('/api/metrics', (_req, res) =>
+  // 运行指标（供监控/巡检使用）：会话级鉴权。此前完全公开，会把进程内存、
+  // Node 版本等运行时信息暴露给同机任意未认证进程。
+  app.get('/api/metrics', (req, res, next) => {
+    // 复用用户会话校验（轻量：仅校验 token 有效性），不要求管理员
+    const headerVal = req.headers['x-ops-user-token']
+    const token = Array.isArray(headerVal) ? headerVal[0] : headerVal
+    if (!currentUser(token || '')) {
+      res.status(401).json({ code: 401, message: '未登录：请先登录后再操作', data: null })
+      return
+    }
+    next()
+  }, (_req, res) =>
     ok(res, {
       uptime: process.uptime(),
       memory: process.memoryUsage(),
@@ -141,19 +151,23 @@ export function createServer(): http.Server {
   const server = http.createServer(app)
 
   // 终端 WebSocket（SSH shell 桥接）：浏览器经 ws:// 连到本机，服务端透传到目标主机。
-  // verifyClient 要求：① 应用令牌（x-ops-token，query.token）② 用户会话令牌（x-ops-user-token，query.ut）。
-  // 双层校验阻断"同机任意进程/未登录会话"借 credentialId 直接开 SSH 终端。
-  // 开发态（NODE_ENV !== 'production'）应用令牌放宽（浏览器预览无 IPC），用户会话仍强制。
+  // verifyClient 要求：① 应用令牌（x-ops-token，query.token）② 用户会话令牌（x-ops-user-token，query.ut）
+  // ③ 管理员角色 + 已完成首登改密 —— HTTP 侧 SSH 全线 requireAdmin，WS 侧此前漏掉，
+  // 个人角色可借管理员存的凭据直接开交互式 root shell，属权限模型漏洞。
+  // maxPayload 限 64KB：终端只传输入与 resize 帧，防恶意超大帧占用内存。
   const wss = new WebSocketServer({
     server,
     path: '/api/terminal',
+    maxPayload: 64 * 1024,
     verifyClient: (info, cb) => {
       try {
         const url = new URL(info.req.url || '', 'http://localhost')
         const appTokenOk =
-          process.env.NODE_ENV !== 'production' || url.searchParams.get('token') === getToken()
+          process.env.NODE_ENV !== 'production' ||
+          safeTokenEqual(url.searchParams.get('token'), getToken())
         const userToken = url.searchParams.get('ut') || ''
-        const userOk = Boolean(currentUser(userToken))
+        const user = currentUser(userToken)
+        const userOk = Boolean(user) && user!.role === 'admin' && !user!.mustChangePassword
         cb(appTokenOk && userOk)
       } catch {
         cb(false)
@@ -173,11 +187,15 @@ let backgroundTimers: ReturnType<typeof setInterval>[] = []
 // 启动后台任务：主机存活监控 + 告警规则引擎。应在 server 成功 listen 后调用，
 // 避免端口冲突重试时重复启动多套定时任务。
 export function startBackgroundJobs(): void {
-  stopBackgroundJobs()
-
-  // 加载历史时序并启动周期指标采集（有 SSH 凭据的资产每 60s 采集一次）
+  // 顺序关键：必须先把磁盘上的历史时序读进内存，再执行 stopBackgroundJobs 的
+  // flush —— 此前先 flush 后 load，空 Map 会把 metrics.json / health.json 整个
+  // 覆盖成 {}，每次重启都静默清空全部 24 小时历史数据（P0 级数据丢失）。
   metricSeriesStore.loadSeries()
   healthStore.loadHealthSeries()
+
+  stopBackgroundJobs()
+
+  // 启动周期指标采集（有 SSH 凭据的资产每 60s 采集一次）
   const collectorTimer = metricCollector.start()
   backgroundTimers.push(collectorTimer)
 
@@ -197,11 +215,8 @@ export function startBackgroundJobs(): void {
 
   // 巡检任务按 Cron 每 30s 检查一次，同一分钟内由 patrolService 做幂等保护。
   const patrolTimer = setInterval(() => {
-    try {
-      patrolService.runScheduled()
-    } catch {
-      /* 单次调度失败不应中断能力总线 */
-    }
+    // 异步体检不再阻塞事件循环；单次调度失败不中断能力总线
+    patrolService.runScheduled().catch(() => {})
   }, 30000)
   backgroundTimers.push(patrolTimer)
 }

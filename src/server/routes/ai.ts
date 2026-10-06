@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { asyncHandler, ok, fail } from '../utils/response'
-import { requireUser } from '../services/authService'
+import { requireUser, requireAdmin } from '../services/authService'
 import {
   safeConfig,
   saveConfig,
@@ -25,11 +25,14 @@ import { logger } from '../utils/logger'
 export const aiRouter = Router()
 
 // —— 智能体 CRUD ——
+// 读操作全员可用；写操作（增删改智能体/修改平台级模型配置）仅管理员：
+// 智能体 systemPrompt 与 baseUrl/apiKey 属平台级资源，且 baseUrl 曾存在被
+// 指向内网地址的 SSRF 风险，不应允许个人角色修改。
 aiRouter.get('/agents', requireUser, asyncHandler(async (_req, res) => {
   ok(res, listAgents())
 }))
 
-aiRouter.post('/agents', requireUser, asyncHandler(async (req, res) => {
+aiRouter.post('/agents', requireUser, requireAdmin, asyncHandler(async (req, res) => {
   try {
     ok(res, createAgent(req.body as Partial<import('@shared/types').AiAgent>))
   } catch (e) {
@@ -37,13 +40,13 @@ aiRouter.post('/agents', requireUser, asyncHandler(async (req, res) => {
   }
 }))
 
-aiRouter.put('/agents/:id', requireUser, asyncHandler(async (req, res) => {
+aiRouter.put('/agents/:id', requireUser, requireAdmin, asyncHandler(async (req, res) => {
   const a = updateAgent(req.params.id, req.body as Partial<import('@shared/types').AiAgent>)
   if (!a) return fail(res, 404, 'agent not found')
   ok(res, a)
 }))
 
-aiRouter.delete('/agents/:id', requireUser, asyncHandler(async (req, res) => {
+aiRouter.delete('/agents/:id', requireUser, requireAdmin, asyncHandler(async (req, res) => {
   const removed = removeAgent(req.params.id)
   if (!removed) return fail(res, 404, 'agent not found')
   ok(res, { ok: true })
@@ -76,14 +79,18 @@ aiRouter.get('/config', requireUser, asyncHandler(async (_req, res) => {
   ok(res, safeConfig())
 }))
 
-// 保存配置
-aiRouter.put('/config', requireUser, asyncHandler(async (req, res) => {
+// 保存配置（平台级：baseUrl / apiKey / 模型）——仅管理员
+aiRouter.put('/config', requireUser, requireAdmin, asyncHandler(async (req, res) => {
   const b = req.body as { baseUrl?: string; apiKey?: string; model?: string; enabled?: boolean; provider?: string; temperature?: number }
-  ok(res, saveConfig(b))
+  try {
+    ok(res, saveConfig(b))
+  } catch (e) {
+    fail(res, 400, (e as Error).message || '配置保存失败')
+  }
 }))
 
-// 测试连接
-aiRouter.post('/config/test', requireUser, asyncHandler(async (_req, res) => {
+// 测试连接——仅管理员
+aiRouter.post('/config/test', requireUser, requireAdmin, asyncHandler(async (_req, res) => {
   try {
     ok(res, await testConnection())
   } catch (e) {

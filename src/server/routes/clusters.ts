@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { asyncHandler, ok, fail } from '../utils/response'
 import { requireUser, requireAdmin } from '../services/authService'
 import { memoryStore } from '../store/memoryStore'
-import { detail as k8sDetail, diagnose as k8sDiagnose } from '../services/k8sService'
+import { detail as k8sDetail, diagnose as k8sDiagnose, parseEndpoint } from '../services/k8sService'
 import { paginate } from '../utils/paginate'
 import { logger } from '../utils/logger'
 import type { ClusterInfo } from '@shared/types'
@@ -20,6 +20,7 @@ clustersRouter.get('/', requireUser, requireAdmin, asyncHandler(async (req, res)
 clustersRouter.post('/', requireUser, requireAdmin, asyncHandler(async (req, res) => {
   const b = req.body as Partial<ClusterInfo>
   if (!b?.name || !b?.endpoint) return fail(res, 400, 'name/endpoint 必填')
+  if (!parseEndpoint(String(b.endpoint))) return fail(res, 400, 'endpoint 需为合法的 http(s) 地址，如 https://k8s-apiserver:6443')
   const c: ClusterInfo = {
     id: genId('cluster'),
     name: b.name,
@@ -30,6 +31,7 @@ clustersRouter.post('/', requireUser, requireAdmin, asyncHandler(async (req, res
     status: 'unknown',
     credentialId: b.credentialId,
     authType: b.authType,
+    insecureSkipTlsVerify: b.insecureSkipTlsVerify === true,
   }
   ok(res, memoryStore.addCluster(c))
 }))
@@ -69,15 +71,23 @@ clustersRouter.post('/:id/diagnose', requireUser, requireAdmin, asyncHandler(asy
   ok(res, { items: await k8sDiagnose(cluster) })
 }))
 
-// 更新集群（名称 / endpoint / 关联凭据 / 认证类型）
+// 更新集群（名称 / endpoint / 关联凭据 / 认证类型 / TLS 校验开关）
 clustersRouter.put('/:id', requireUser, requireAdmin, asyncHandler(async (req, res) => {
   const patch = req.body as Partial<ClusterInfo>
-  const updated = memoryStore.updateCluster(req.params.id, {
+  if (patch.endpoint && !parseEndpoint(String(patch.endpoint))) {
+    return fail(res, 400, 'endpoint 需为合法的 http(s) 地址，如 https://k8s-apiserver:6443')
+  }
+  const updates: Partial<ClusterInfo> = {
     name: patch.name,
     endpoint: patch.endpoint,
     credentialId: patch.credentialId,
     authType: patch.authType,
-  })
+  }
+  // 仅在显式传值时更新布尔开关，避免 undefined 覆盖既有配置
+  if (patch.insecureSkipTlsVerify != null) {
+    updates.insecureSkipTlsVerify = patch.insecureSkipTlsVerify === true
+  }
+  const updated = memoryStore.updateCluster(req.params.id, updates)
   if (!updated) return fail(res, 404, 'cluster not found')
   ok(res, updated)
 }))

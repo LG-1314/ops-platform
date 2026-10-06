@@ -184,6 +184,23 @@ export const alertRuleService = {
         void notificationService.notify(alert).catch(() => {})
       }
     }
+    sweepStaleCooldowns(rules)
     return created
   },
+}
+
+/** 冷却表清理：规则或资产被删除后，其 `ruleId:assetId` 条目永远不会再命中
+ *  "指标恢复即清除"的路径，会永久滞留 —— 每轮评估尾部做一次过滤。
+ *  只清理结构完整的键（ruleId/assetId 均为非空且非字面量 "undefined"）。 */
+function sweepStaleCooldowns(activeRules: AlertRule[]): void {
+  const ruleIds = new Set(activeRules.map((r) => r.id).filter((id): id is string => typeof id === 'string' && id.length > 0))
+  const assetIds = new Set(memoryStore.getAssets().map((a) => a.id))
+  for (const key of firedAt.keys()) {
+    const idx = key.indexOf(':')
+    if (idx <= 0) continue
+    const ruleId = key.slice(0, idx)
+    const assetId = key.slice(idx + 1)
+    if (!ruleId || ruleId === 'undefined' || !assetId || assetId === 'undefined') continue
+    if (!ruleIds.has(ruleId) || !assetIds.has(assetId)) firedAt.delete(key)
+  }
 }

@@ -24,6 +24,44 @@ assetsRouter.post('/discover', asyncHandler(async (_req, res) => {
   ok(res, assetService.discover())
 }))
 
+// 批量导入：逐条走与手工录入完全相同的校验；主机重复的行跳过而不是失败整批。
+assetsRouter.post('/import', asyncHandler(async (req, res) => {
+  const body = req.body as { items?: unknown }
+  const items = body?.items
+  if (!Array.isArray(items) || items.length === 0) return fail(res, 400, 'items 必须是非空数组')
+  if (items.length > 500) return fail(res, 400, '单次最多导入 500 条')
+  const existingHosts = new Set(
+    assetService
+      .list()
+      .map((a) => (a.host || '').toLowerCase())
+      .filter(Boolean)
+  )
+  const created: string[] = []
+  const skipped: { name: string; reason: string }[] = []
+  items.forEach((raw, i) => {
+    const input = raw as Record<string, unknown>
+    const lineNo = i + 1
+    const invalid = validateAssetInput({ ...input, source: 'manual' }, true)
+    if (invalid) {
+      skipped.push({ name: String(input.name || `第 ${lineNo} 行`), reason: invalid })
+      return
+    }
+    const host = String(input.host).trim()
+    if (existingHosts.has(host.toLowerCase())) {
+      skipped.push({ name: String(input.name || host), reason: '主机地址已存在' })
+      return
+    }
+    try {
+      const asset = assetService.create({ ...(input as object), source: 'manual' } as never)
+      created.push(asset.id)
+      existingHosts.add(host.toLowerCase())
+    } catch (e) {
+      skipped.push({ name: String(input.name || host), reason: e instanceof Error ? e.message : '写入失败' })
+    }
+  })
+  ok(res, { total: items.length, created: created.length, skipped })
+}))
+
 // 未保存资产的连通性测试：有端口时进行 TCP 探测，否则进行 ICMP ping。
 assetsRouter.post('/test-connection', asyncHandler(async (req, res) => {
   const input = req.body as Record<string, unknown>

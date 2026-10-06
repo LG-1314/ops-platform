@@ -12,7 +12,7 @@ diagnosticsRouter.use(requireUser, requireAdmin)
 diagnosticsRouter.post('/run', asyncHandler(async (req, res) => {
   const assetId =
     req.body && typeof req.body.assetId === 'string' ? req.body.assetId : undefined
-  ok(res, diagnosticService.run(assetId))
+  ok(res, await diagnosticService.run(assetId))
 }))
 
 // 体检历史

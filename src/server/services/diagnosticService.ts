@@ -6,9 +6,9 @@ const historyStore: DiagnoseResult[] = []
 const MAX_HISTORY = 100
 
 export const diagnosticService = {
-  /** 调用 engine.diagnose()（只读），可选地按资产记录历史，返回结构化结果 */
-  run(assetId?: string): DiagnoseResult {
-    const result = diagnose()
+  /** 调用 engine.diagnose()（只读，异步探针），可选地按资产记录历史，返回结构化结果 */
+  async run(assetId?: string): Promise<DiagnoseResult> {
+    const result = await diagnose()
     if (assetId) {
       historyStore.push({
         ...result,

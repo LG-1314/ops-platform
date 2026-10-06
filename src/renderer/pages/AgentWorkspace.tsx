@@ -102,13 +102,16 @@ export default function AgentWorkspace() {
   const [configOk, setConfigOk] = useState(false)
   const [confirmDeleteAgent, setConfirmDeleteAgent] = useState<AiAgent | null>(null)
 
-  const loadAgents = async () => {
+  const loadAgents = async (clearedId?: string) => {
     setLoading(true)
     setError('')
     try {
       const list = await api.ai.agents.list()
       setAgents(list)
-      if (list.length && !selectedId) setSelectedId(list[0].id)
+      // clearedId：调用方刚把该 id 从选中态清除（如删除当前选中项）。
+      // 闭包里的 selectedId 此时还是旧值，不传参会误判"已有选中"导致列表空选。
+      const effective = clearedId !== undefined ? '' : selectedId
+      if (list.length && !effective) setSelectedId(list[0].id)
       else if (list.length === 0) setSelectedId('')
     } catch (e) {
       setError((e as Error).message || '加载智能体失败')
@@ -265,9 +268,10 @@ export default function AgentWorkspace() {
     if (!confirmDeleteAgent) return
     try {
       await api.ai.agents.remove(confirmDeleteAgent.id)
+      const wasSelected = selectedId === confirmDeleteAgent.id
       setSelectedId((prev) => (prev === confirmDeleteAgent.id ? '' : prev))
       setConfirmDeleteAgent(null)
-      await loadAgents()
+      await loadAgents(wasSelected ? confirmDeleteAgent.id : undefined)
     } catch (e) {
       setError((e as Error).message || '删除失败')
     }

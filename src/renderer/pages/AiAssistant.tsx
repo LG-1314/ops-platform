@@ -57,14 +57,19 @@ const SUGGESTIONS = [
   { label: '最佳实践', icon: <IconBrain fontSize="small" />, prompt: '请分享企业运维最佳实践，涵盖监控、告警、巡检、变更管理。' },
 ]
 
-/** 打字机渐显：把一条消息的内容按字符逐步 reveal */
-function useTypewriter(messages: ChatEntry[]): [ChatEntry[], (msgs: ChatEntry[]) => void] {
-  const [msgs, setMsgs] = useState<ChatEntry[]>(messages)
+/** 打字机渐显：把一条消息的内容按字符逐步 reveal。
+ *  update 同时接受数组与函数式更新；内部用 ref 镜像当前数组，
+ *  避免 ask() 期间用户再次提问时读到过期快照（导致上条回答被截断、用户消息丢失）。 */
+function useTypewriter(initial: ChatEntry[]): [ChatEntry[], (u: ChatEntry[] | ((prev: ChatEntry[]) => ChatEntry[])) => void] {
+  const [msgs, setMsgs] = useState<ChatEntry[]>(initial)
+  const msgsRef = useRef<ChatEntry[]>(initial)
   const timers = useRef<ReturnType<typeof setInterval>[]>([])
 
   useEffect(() => () => { timers.current.forEach(clearInterval); timers.current = [] }, [])
 
-  const update = (next: ChatEntry[]) => {
+  const update = (u: ChatEntry[] | ((prev: ChatEntry[]) => ChatEntry[])) => {
+    const next = typeof u === 'function' ? u(msgsRef.current) : u
+    msgsRef.current = next
     setMsgs(next)
     timers.current.forEach(clearInterval)
     timers.current = []
@@ -77,14 +82,14 @@ function useTypewriter(messages: ChatEntry[]): [ChatEntry[], (msgs: ChatEntry[])
         const cur = prev[idx]
         if (!cur || cur.typeLen == null) return prev
         const nextLen = cur.typeLen + 3
+        const copy = [...prev]
         if (nextLen >= full.length) {
           clearInterval(timer)
-          const copy = [...prev]
           copy[idx] = { ...cur, typeLen: -1 }
-          return copy
+        } else {
+          copy[idx] = { ...cur, typeLen: nextLen }
         }
-        const copy = [...prev]
-        copy[idx] = { ...cur, typeLen: nextLen }
+        msgsRef.current = copy
         return copy
       })
     }, 16)
@@ -98,7 +103,7 @@ export default function AiAssistant() {
   const theme = useTheme()
   const navigate = useNavigate()
   const [messages, setMessages] = useTypewriter([
-    { role: 'assistant', content: '你好！我是「运维全维度管理平台」的 AI 智能运维助手。\n\n我可以帮你：\n✅ 分析告警与故障根因\n✅ 诊断主机健康状态\n✅ 生成巡检报告\n✅ 解答运维知识问题\n✅ 提供安全操作建议\n\n请在下方输入问题或点击推荐话题开始。', typeLen: -1 }
+    { role: 'assistant', content: '你好！我是「运维全维度管理平台」的 AI 智能运维助手。\n\n我可以帮你：\n• 分析告警与故障根因\n• 诊断主机健康状态\n• 生成巡检报告\n• 解答运维知识问题\n• 提供安全操作建议\n\n请在下方输入问题或点击推荐话题开始。', typeLen: -1 }
   ])
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
@@ -136,16 +141,17 @@ export default function AiAssistant() {
     setError('')
     const userMsg: ChatEntry = { role: 'user', content: q }
     const loadingMsg: ChatEntry = { role: 'assistant', content: '', loading: true, typeLen: -1 }
-    setMessages([...messages, userMsg, loadingMsg])
+    // 函数式更新：读到的永远是最新会话（此前闭包快照会把正在打字的上条回答截断）
+    setMessages((prev) => [...prev, userMsg, loadingMsg])
     setSending(true)
     try {
       const res = await api.ai.chat([
         { role: 'system', content: '你是一个专业的企业级运维 AI 助手，回答使用简体中文，step-by-step 可执行，涉高危操作务必提醒审批。' },
         { role: 'user', content: q },
       ])
-      setMessages([...messages, userMsg, { role: 'assistant', content: res.reply, typeLen: 0 }])
+      setMessages((prev) => prev.map((m) => (m.loading ? { role: 'assistant' as const, content: res.reply, typeLen: 0 } : m)))
     } catch (e) {
-      setMessages(messages.filter((m) => !m.loading))
+      setMessages((prev) => prev.filter((m) => !m.loading))
       setError((e as Error).message || 'AI 请求失败')
     } finally {
       setSending(false)

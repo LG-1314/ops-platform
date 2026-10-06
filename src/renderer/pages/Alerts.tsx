@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   Box,
   Stack,
@@ -27,6 +27,7 @@ import {
   Typography,
 } from '@mui/material'
 import { useTheme } from '@mui/material/styles'
+import type { Theme } from '@mui/material/styles'
 import { Add as IconAdd, Delete as IconDelete, PlayArrow as IconEval, Refresh as IconRefresh, SmartToy as IconAi, PushPin as IconPin, MarkEmailRead as IconRead } from '@mui/icons-material'
 import { api } from '../../capabilities/bus'
 import type {
@@ -43,22 +44,40 @@ import DataTable, { Column } from '../components/DataTable'
 import StatusBadge from '../components/StatusBadge'
 import PageHeader from '../components/PageHeader'
 import AiDialog from '../components/AiDialog'
+import ConfirmDialog from '../components/ConfirmDialog'
 
-/** 严重度中文映射：P0 紧急(红) / P1 严重(橙) / P2 一般(黄) / P3 轻微(绿)，配色与 STATUS_COLOR 状态色系保持一致 */
-const LEVEL_META: Record<AlertLevel, { label: string; color: string }> = {
-  P0: { label: '紧急', color: '#F87171' }, // = STATUS_COLOR.error
-  P1: { label: '严重', color: '#F59E0B' }, // = STATUS_COLOR.warn（橙）
-  P2: { label: '一般', color: '#FACC15' }, // 黄
-  P3: { label: '轻微', color: '#34D399' }, // = STATUS_COLOR.ok
+/** 严重度中文映射 */
+const LEVEL_LABEL: Record<AlertLevel, string> = {
+  P0: '紧急',
+  P1: '严重',
+  P2: '一般',
+  P3: '轻微',
+}
+
+/** 严重度中文映射：P0 紧急 / P1 严重 / P2 一般 / P3 轻微。
+ *  颜色取主题语义色（随深浅模式切换）：此前硬编码深色模式 hex，浅色底上对比度不足。 */
+function levelColor(theme: Theme, level: AlertLevel): string {
+  switch (level) {
+    case 'P0':
+      return theme.palette.error.main
+    case 'P1':
+      return theme.palette.warning.main
+    case 'P2':
+      return theme.palette.info.main
+    case 'P3':
+      return theme.palette.success.main
+  }
 }
 
 function LevelChip({ level }: { level: AlertLevel }) {
-  const meta = LEVEL_META[level]
+  const theme = useTheme()
+  const label = LEVEL_LABEL[level]
+  const color = levelColor(theme, level)
   return (
     <Chip
       size="small"
-      label={`${level} ${meta.label}`}
-      sx={{ bgcolor: `${meta.color}1A`, color: meta.color, fontWeight: 600, border: `1px solid ${meta.color}33`, height: 24 }}
+      label={`${level} ${label}`}
+      sx={{ bgcolor: `${color}1A`, color, fontWeight: 600, border: `1px solid ${color}33`, height: 24 }}
     />
   )
 }
@@ -78,9 +97,10 @@ const STATE_LABEL: Record<AlertState, string> = {
 }
 
 function stateStatus(s: string): Status {
-  if (s === 'active') return 'warn'
-  if (s === 'resolved') return 'ok'
+  if (s === 'active') return 'error' // 未处理：需要立即关注
+  if (s === 'ack') return 'warn' // 已确认：处理中（此前与"已解决"同为绿色，语义混淆）
   if (s === 'silenced') return 'unknown'
+  if (s === 'resolved') return 'ok'
   return 'ok'
 }
 
@@ -113,6 +133,10 @@ export default function Alerts() {
   const [aiCtx, setAiCtx] = useState<{ title: string; payload: Record<string, unknown> } | null>(null)
   // 告警详情弹窗
   const [detail, setDetail] = useState<Alert | null>(null)
+  // 规则删除确认 + 规则表单保存态/弹窗内错误
+  const [confirmDeleteRule, setConfirmDeleteRule] = useState<AlertRule | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [dialogError, setDialogError] = useState('')
 
   // 规则表单
   const [open, setOpen] = useState(false)
@@ -189,7 +213,17 @@ export default function Alerts() {
   }
 
   async function onSave() {
+    if (saving) return
     setError('')
+    if (form.scope === 'asset' && !form.assetId) {
+      setError('范围选择「指定资产」时必须选择具体资产')
+      return
+    }
+    if (!Number.isFinite(form.threshold)) {
+      setError('阈值必须是有效数字')
+      return
+    }
+    setSaving(true)
     try {
       const payload = {
         name: form.name,
@@ -206,7 +240,10 @@ export default function Alerts() {
       setOpen(false)
       loadRules()
     } catch (e) {
-      setError((e as Error).message || '保存失败')
+      // 保持在弹窗内展示：页面级错误会被打开的弹窗遮挡，用户只看到"点保存没反应"
+      setDialogError((e as Error).message || '保存失败')
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -285,7 +322,7 @@ export default function Alerts() {
           <Typography variant="body2" sx={{ fontWeight: r.readAt ? 400 : 700 }}>{r.title}</Typography>
           {r.pinned && <IconPin fontSize="small" sx={{ color: theme.palette.warning.main, fontSize: 14 }} />}
           {thresholdText(r) && (
-            <Typography variant="caption" component="div" sx={{ color: 'text.secondary', fontFamily: 'monospace', fontSize: 12, mt: 0.25 }}>
+            <Typography variant="caption" component="div" sx={{ color: 'text.secondary', fontFamily: 'var(--font-mono)', fontSize: 12, mt: 0.25 }}>
               {thresholdText(r)}
             </Typography>
           )}
@@ -295,7 +332,7 @@ export default function Alerts() {
               component="div"
               sx={{
                 color: r.level === 'P0' || r.level === 'P1' ? 'error.main' : 'warning.main',
-                fontFamily: 'monospace',
+                fontFamily: 'var(--font-mono)',
                 fontSize: 12,
                 mt: 0.25,
                 overflow: 'hidden',
@@ -364,14 +401,19 @@ export default function Alerts() {
     },
   ]
 
-  // 排序：置顶优先 → 未读优先 → 时间倒序
-  const sortedAlerts = [...alerts].sort((a, b) => {
-    if (a.pinned && !b.pinned) return -1
-    if (!a.pinned && b.pinned) return 1
-    if (!a.readAt && b.readAt) return -1
-    if (a.readAt && !b.readAt) return 1
-    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-  })
+  // 排序：置顶优先 → 未读优先 → 时间倒序（useMemo：避免每次渲染产生新数组
+  // 触发 DataTable 分页重置/子组件重渲染）
+  const sortedAlerts = useMemo(
+    () =>
+      [...alerts].sort((a, b) => {
+        if (a.pinned && !b.pinned) return -1
+        if (!a.pinned && b.pinned) return 1
+        if (!a.readAt && b.readAt) return -1
+        if (a.readAt && !b.readAt) return 1
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      }),
+    [alerts]
+  )
 
   const metricLabel = (m: AlertMetric) => METRICS.find((x) => x.v === m)?.label ?? m
 
@@ -411,7 +453,7 @@ export default function Alerts() {
             <MenuItem value="">全部</MenuItem>
             {(['P0', 'P1', 'P2', 'P3'] as AlertLevel[]).map((l) => (
               <MenuItem key={l} value={l}>
-                {l} {LEVEL_META[l].label}
+                {l} · {LEVEL_LABEL[l]}
               </MenuItem>
             ))}
           </TextField>
@@ -468,7 +510,7 @@ export default function Alerts() {
                   <TableCell sx={{ fontWeight: 600 }}>{r.name}</TableCell>
                   <TableCell>{r.scope === 'all' ? '全部资产' : `资产 ${r.assetId ?? ''}`}</TableCell>
                   <TableCell>{metricLabel(r.metric)}</TableCell>
-                  <TableCell sx={{ fontFamily: 'monospace' }}>
+                  <TableCell sx={{ fontFamily: 'var(--font-mono)' }}>
                     {r.operator} {r.threshold}
                   </TableCell>
                   <TableCell>
@@ -481,9 +523,11 @@ export default function Alerts() {
                     <Button size="small" onClick={() => openEdit(r)}>
                       编辑
                     </Button>
-                    <IconButton size="small" onClick={() => void onDelete(r.id)}>
-                      <IconDelete fontSize="small" />
-                    </IconButton>
+                    <Tooltip title="删除规则">
+                      <IconButton size="small" onClick={() => setConfirmDeleteRule(r)}>
+                        <IconDelete fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
                   </TableCell>
                 </TableRow>
               ))}
@@ -497,6 +541,7 @@ export default function Alerts() {
         <DialogTitle>{editing ? '编辑规则' : '添加规则'}</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
+            {dialogError && <MuiAlert severity="error" onClose={() => setDialogError('')}>{dialogError}</MuiAlert>}
             <TextField label="规则名" fullWidth value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
             <TextField
               label="范围"
@@ -547,9 +592,9 @@ export default function Alerts() {
               />
             </Stack>
             <TextField label="级别" select fullWidth value={form.level} onChange={(e) => setForm((f) => ({ ...f, level: e.target.value as AlertLevel }))}>
-              {['P0', 'P1', 'P2', 'P3'].map((l) => (
+              {(['P0', 'P1', 'P2', 'P3'] as AlertLevel[]).map((l) => (
                 <MenuItem key={l} value={l}>
-                  {l}
+                  {l} · {LEVEL_LABEL[l]}
                 </MenuItem>
               ))}
             </TextField>
@@ -557,12 +602,24 @@ export default function Alerts() {
           </Stack>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setOpen(false)}>取消</Button>
-          <Button variant="contained" disabled={!form.name} onClick={() => void onSave()}>
-            保存
+          <Button onClick={() => setOpen(false)} disabled={saving}>取消</Button>
+          <Button variant="contained" disabled={!form.name || saving} onClick={() => void onSave()}>
+            {saving ? '保存中…' : '保存'}
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* 规则删除确认 */}
+      <ConfirmDialog
+        open={!!confirmDeleteRule}
+        title="删除告警规则"
+        content={<>确定删除规则「{confirmDeleteRule?.name}」吗？删除后该规则不再产生新告警。</>}
+        onConfirm={() => {
+          if (confirmDeleteRule) void onDelete(confirmDeleteRule.id)
+          setConfirmDeleteRule(null)
+        }}
+        onClose={() => setConfirmDeleteRule(null)}
+      />
 
       {/* 告警详情弹窗 */}
       <Dialog open={!!detail} onClose={() => setDetail(null)} maxWidth="sm" fullWidth>
@@ -580,7 +637,7 @@ export default function Alerts() {
               </Box>
               <Box>
                 <Typography variant="caption" color="text.secondary">指标</Typography>
-                <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+                <Typography variant="body2" sx={{ fontFamily: 'var(--font-mono)' }}>
                   {thresholdText(detail) ?? '（非阈值类告警）'}
                 </Typography>
               </Box>

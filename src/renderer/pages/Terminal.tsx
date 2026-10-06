@@ -70,6 +70,14 @@ export default function Terminal() {
   const fitRef = useRef<FitAddon | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const tokenRef = useRef<string>('')
+  // 组件存活标记：getToken() await 期间卸载时，connect 不得再创建孤儿 WS 连接
+  const aliveRef = useRef(true)
+  useEffect(() => {
+    aliveRef.current = true
+    return () => {
+      aliveRef.current = false
+    }
+  }, [])
 
   // 初始化 xterm 实例（仅一次）
   useEffect(() => {
@@ -162,6 +170,7 @@ export default function Terminal() {
     wsRef.current = null
 
     const token = await getToken()
+    if (!aliveRef.current) return // 卸载后不再建连，防止服务端 shell 泄漏
     let userToken = ''
     try {
       userToken = localStorage.getItem(USER_TOKEN_KEY) || ''
@@ -212,7 +221,8 @@ export default function Terminal() {
       }
     }
     ws.onclose = () => {
-      setConnState('closed')
+      // onerror 先于 onclose 触发：错误态不应被后续 close 覆盖成"已断开"
+      setConnState((prev) => (prev === 'error' ? prev : 'closed'))
       term?.writeln('\r\n\x1b[90m[连接已关闭]\x1b[0m\r\n')
       if (wsRef.current === ws) wsRef.current = null
     }

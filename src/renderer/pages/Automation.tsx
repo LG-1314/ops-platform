@@ -40,6 +40,7 @@ import type {
 import PageHeader from '../components/PageHeader'
 import StatusBadge from '../components/StatusBadge'
 import EmptyState from '../components/EmptyState'
+import ConfirmDialog from '../components/ConfirmDialog'
 
 function incidentStatus(s: string): Status {
   if (s === 'open') return 'error'
@@ -66,9 +67,22 @@ const STATE_LABEL: Record<IncidentState, string> = {
   postmortem: '复盘',
 }
 
-const STATE_FLOW: IncidentState[] = ['open', 'investigating', 'resolved', 'postmortem']
+// CI/CD 流水线状态中文映射（台账展示统一中文，不再直接显示英文枚举值）
+const CICD_LABEL: Record<CicdPipeline['status'], string> = {
+  pending: '待运行',
+  running: '运行中',
+  success: '成功',
+  failed: '失败',
+}
+const CICD_STAGES: { value: string; label: string }[] = [
+  { value: 'build', label: '构建' },
+  { value: 'test', label: '测试' },
+  { value: 'deploy', label: '部署' },
+  { value: 'verify', label: '验证' },
+  { value: 'release', label: '发布' },
+]
 
-const CICD_STAGES = ['build', 'test', 'deploy'] as const
+const STATE_FLOW: IncidentState[] = ['open', 'investigating', 'resolved', 'postmortem']
 
 const emptyIncident = () => ({
   title: '',
@@ -102,6 +116,9 @@ export default function Automation() {
   const [pipeEditId, setPipeEditId] = useState<string | null>(null)
   const [runningId, setRunningId] = useState('')
 
+  // 删除确认（此前单击删除图标立即执行）
+  const [confirmDelete, setConfirmDelete] = useState<{ kind: 'incident' | 'pipeline'; id: string; name: string } | null>(null)
+
   const load = () => {
     setLoading(true)
     setError('')
@@ -129,6 +146,7 @@ export default function Automation() {
   }
 
   const removeIncident = async (id: string) => {
+    setConfirmDelete(null)
     setError('')
     try {
       await api.automation.removeIncident(id)
@@ -216,6 +234,7 @@ export default function Automation() {
   }
 
   const removePipeline = async (id: string) => {
+    setConfirmDelete(null)
     setError('')
     try {
       await api.automation.removePipeline(id)
@@ -314,7 +333,7 @@ export default function Automation() {
                           </IconButton>
                         </Tooltip>
                         <Tooltip title="删除事故">
-                          <IconButton size="small" color="error" onClick={() => removeIncident(inc.id)}>
+                          <IconButton size="small" color="error" onClick={() => setConfirmDelete({ kind: 'incident', id: inc.id, name: inc.title })}>
                             <IconDelete fontSize="small" />
                           </IconButton>
                         </Tooltip>
@@ -348,16 +367,16 @@ export default function Automation() {
                         <Typography variant="body2" sx={{ fontWeight: 600 }}>
                           {p.name}
                         </Typography>
-                        <StatusBadge status={cicdStatus(p.status)} label={p.status} />
+                        <StatusBadge status={cicdStatus(p.status)} label={CICD_LABEL[p.status] ?? p.status} />
                       </Stack>
                       <Typography variant="caption" color="text.secondary">
-                        阶段：{p.stage}
+                        阶段：{CICD_STAGES.find((s) => s.value === p.stage)?.label ?? p.stage}
                         {p.lastRunAt
                           ? ` · ${new Date(p.lastRunAt).toLocaleString()}`
                           : ''}
                       </Typography>
                       <Stack direction="row" spacing={0.5} mt={1}>
-                        <Tooltip title="触发运行">
+                        <Tooltip title="记录一次运行（台账模式：写入状态与时间，暂未接入真实 CI/CD 引擎）">
                           <IconButton
                             size="small"
                             color="primary"
@@ -373,7 +392,7 @@ export default function Automation() {
                           </IconButton>
                         </Tooltip>
                         <Tooltip title="删除流水线">
-                          <IconButton size="small" color="error" onClick={() => removePipeline(p.id)}>
+                          <IconButton size="small" color="error" onClick={() => setConfirmDelete({ kind: 'pipeline', id: p.id, name: p.name })}>
                             <IconDelete fontSize="small" />
                           </IconButton>
                         </Tooltip>
@@ -392,6 +411,7 @@ export default function Automation() {
         <DialogTitle>{incEditId ? '编辑事故' : '新建事故'}</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
+            {error && <MuiAlert severity="error" onClose={() => setError('')}>{error}</MuiAlert>}
             <TextField
               label="标题"
               fullWidth
@@ -431,6 +451,7 @@ export default function Automation() {
         <DialogTitle>{pipeEditId ? '编辑流水线' : '添加流水线'}</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
+            {error && <MuiAlert severity="error" onClose={() => setError('')}>{error}</MuiAlert>}
             <TextField
               label="名称"
               fullWidth
@@ -442,11 +463,11 @@ export default function Automation() {
               select
               fullWidth
               value={pipeForm.stage}
-              onChange={(e) => setPipeForm((f) => ({ ...f, stage: e.target.value as (typeof CICD_STAGES)[number] }))}
+              onChange={(e) => setPipeForm((f) => ({ ...f, stage: e.target.value }))}
             >
               {CICD_STAGES.map((s) => (
-                <MenuItem key={s} value={s}>
-                  {s}
+                <MenuItem key={s.value} value={s.value}>
+                  {s.label}
                 </MenuItem>
               ))}
             </TextField>
@@ -457,9 +478,9 @@ export default function Automation() {
               value={pipeForm.status}
               onChange={(e) => setPipeForm((f) => ({ ...f, status: e.target.value as CicdPipeline['status'] }))}
             >
-              <MenuItem value="pending">pending</MenuItem>
-              <MenuItem value="success">success</MenuItem>
-              <MenuItem value="failed">failed</MenuItem>
+              <MenuItem value="pending">待运行</MenuItem>
+              <MenuItem value="success">成功</MenuItem>
+              <MenuItem value="failed">失败</MenuItem>
             </TextField>
           </Stack>
         </DialogContent>
@@ -470,6 +491,19 @@ export default function Automation() {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* 删除确认（事故 / 流水线共用） */}
+      <ConfirmDialog
+        open={!!confirmDelete}
+        title={confirmDelete?.kind === 'incident' ? '删除事故' : '删除流水线'}
+        content={<>确定删除「{confirmDelete?.name}」吗？此操作不可恢复。</>}
+        onConfirm={() => {
+          if (!confirmDelete) return
+          if (confirmDelete.kind === 'incident') void removeIncident(confirmDelete.id)
+          else void removePipeline(confirmDelete.id)
+        }}
+        onClose={() => setConfirmDelete(null)}
+      />
     </Box>
   )
 }

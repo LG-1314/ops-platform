@@ -40,15 +40,22 @@ export function notFoundHandler(_req: Request, res: Response): void {
 }
 
 /**
- * 统一错误兜底（code 500）。
+ * 统一错误兜底。
  * 安全：对外只返回通用文案，内部 err.message 仅服务端日志，绝不回显到客户端（防内网拓扑/路径泄露）。
+ * 例外：body-parser 抛出的 malformed JSON 等自带 4xx 状态（err.status/err.statusCode），
+ * 按 400 家族返回而不是 500——此前所有解析错误都被误报成"服务器内部错误"。
  */
 export function errorHandler(
-  err: Error,
+  err: Error & { status?: number; statusCode?: number },
   _req: Request,
   res: Response,
   _next: NextFunction
 ): void {
+  const status = err?.status || err?.statusCode
+  if (typeof status === 'number' && status >= 400 && status < 500) {
+    fail(res, status, status === 400 ? '请求格式错误：请检查提交的数据' : `请求失败（${status}）`)
+    return
+  }
   logger.error(`unhandled error: ${err?.stack || err?.message || String(err)}`)
   fail(res, 500, 'Internal Server Error')
 }

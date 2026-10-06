@@ -59,11 +59,33 @@ export function safeConfig(): SafeAiConfig {
   }
 }
 
+/** 校验模型服务地址：仅允许 http(s) 协议；https 之外仅放行本机回环（Ollama 等本地推理），
+ *  防止把 baseUrl 指向云元数据/内网服务做 SSRF 探测。 */
+function validateBaseUrl(raw: string): string {
+  let url: URL
+  try {
+    url = new URL(raw)
+  } catch {
+    throw new Error('API 地址格式无效')
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+    throw new Error('API 地址仅支持 http(s) 协议')
+  }
+  if (url.protocol === 'http:') {
+    const host = url.hostname.toLowerCase()
+    const loopback = host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]'
+    if (!loopback) throw new Error('非 https 的 API 地址仅允许本机回环地址（如 http://127.0.0.1:11434）')
+  }
+  return raw
+}
+
 /** 保存配置：apiKey 入站明文 → 加密落盘；未传 apiKey 则保留原密钥 */
 export function saveConfig(input: { baseUrl?: string; apiKey?: string; model?: string; enabled?: boolean; provider?: string; temperature?: number }): SafeAiConfig {
   const prev = memoryStore.getAiConfig() || { baseUrl: DEFAULT_BASE_URL, model: DEFAULT_MODEL, enabled: false, provider: 'openai', temperature: DEFAULT_TEMPERATURE }
+  const baseUrl = input.baseUrl?.trim() || prev.baseUrl || DEFAULT_BASE_URL
+  validateBaseUrl(baseUrl)
   const next: AiConfig = {
-    baseUrl: input.baseUrl?.trim() || prev.baseUrl || DEFAULT_BASE_URL,
+    baseUrl,
     model: input.model?.trim() || prev.model || DEFAULT_MODEL,
     provider: input.provider || prev.provider || 'openai',
     temperature: input.temperature != null ? input.temperature : (prev.temperature ?? DEFAULT_TEMPERATURE),

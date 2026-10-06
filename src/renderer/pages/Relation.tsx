@@ -154,7 +154,7 @@ export default function Relation() {
                       <ConfirmationNumber fontSize="small" color="action" />
                       <Typography variant="caption" color="text.secondary">工单</Typography>
                     </Stack>
-                    <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>{r.ticket || '—'}</Typography>
+                    <Typography variant="body2" sx={{ fontFamily: 'var(--font-mono)' }}>{r.ticket || '—'}</Typography>
                   </Box>
                   <Box>
                     <Stack direction="row" spacing={1} alignItems="center">

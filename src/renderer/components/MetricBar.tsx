@@ -23,7 +23,8 @@ function MetricBarInner({ label, pct, compact }: MetricBarProps) {
   if (compact) {
     return (
       <Stack direction="row" alignItems="center" spacing={0.6} sx={{ minWidth: 96 }}>
-        <Typography variant="caption" color="text.secondary" sx={{ width: 34, fontSize: 10, flexShrink: 0 }}>
+        {/* 34px 放不下「CPU 使用率」这类中文标签，会折行破坏行高；56px 起步 + 不换行 */}
+        <Typography variant="caption" color="text.secondary" sx={{ width: 56, fontSize: 10, flexShrink: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {label}
         </Typography>
         <LinearProgress

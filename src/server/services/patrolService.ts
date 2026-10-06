@@ -3,7 +3,8 @@ import { diagnose } from '@diagnostics/engine.ts'
 import type { PatrolTask, PatrolRun, PatrolLayer } from '@shared/types'
 
 function genId(prefix: string): string {
-  return `${prefix}-${Date.now().toString(36)}`
+  // 带随机后缀：runScheduled 同一毫秒可为多个任务生成 id，纯时间戳会撞车
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
 }
 
 type CronRange = { min: number; max: number }
@@ -99,12 +100,12 @@ export const patrolService = {
   },
 
   /** 合成执行：对已纳管资产（此处以本机只读体检代表）跑一次 diagnose，生成一条历史记录 */
-  run(id: string): PatrolRun {
+  async run(id: string): Promise<PatrolRun> {
     const task = memoryStore.getPatrols().find((p) => p.id === id)
     if (!task) throw new Error('patrol not found')
 
     const startedAt = new Date().toISOString()
-    const result = diagnose()
+    const result = await diagnose()
     const finishedAt = new Date().toISOString()
 
     const hasError = result.metrics.some((m) => m.status === 'error')
@@ -122,6 +123,8 @@ export const patrolService = {
     }
 
     task.history = [...(task.history || []), run]
+    // 历史上限：高频 cron（如每分钟）一年会写 50 万条进 store.json，只保留最近 50 次
+    if (task.history.length > 50) task.history = task.history.slice(-50)
     task.lastRunAt = finishedAt
     task.status = run.status
     memoryStore.updatePatrol(id, task)
@@ -129,13 +132,14 @@ export const patrolService = {
     return run
   },
 
-  /** 执行当前分钟到期的巡检任务；同一分钟内幂等，避免 30s 定时器重复触发。 */
-  runScheduled(now = new Date()): number {
+  /** 执行当前分钟到期的巡检任务；同一分钟内幂等，避免 30s 定时器重复触发。
+   *  逐个 await：体检已异步化，不再阻塞事件循环，也天然串行避免过载。 */
+  async runScheduled(now = new Date()): Promise<number> {
     let executed = 0
     for (const task of memoryStore.getPatrols()) {
       if (!task.enabled || !matchesCron(task.cron, now) || sameMinute(task.lastRunAt, now)) continue
       try {
-        this.run(task.id)
+        await this.run(task.id)
         // 以调度检查时间作为幂等标记，避免任务执行跨分钟导致下一轮重复触发。
         memoryStore.updatePatrol(task.id, { lastRunAt: now.toISOString() })
         executed += 1

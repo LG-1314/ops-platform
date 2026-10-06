@@ -1,4 +1,6 @@
 import os from 'node:os'
+import fs from 'node:fs'
+import path from 'node:path'
 import { hostname } from 'node:os'
 import type {
   Asset,
@@ -22,9 +24,12 @@ import type {
   AiConfig,
   AiAgent,
 } from '@shared/types'
-import { loadStore, schedulePersist, persistNow } from './persist'
+import { loadStore, schedulePersist, persistNow, getLoadOutcome } from './persist'
+import { metricSeriesStore } from './metricSeriesStore'
+import { healthStore } from './healthHistoryStore'
 import { encrypt } from '../utils/crypto'
 import { hashPassword } from '../services/authService'
+import { logger } from '../utils/logger'
 
 // 进程内内存存储 + 文件持久化（重启不丢）。SQLite 后续替换点。单例。
 interface Store {
@@ -314,15 +319,40 @@ if (persisted && typeof persisted === 'object') {
       mustChangePassword: true,
     })
   }
+  // 旧数据迁移：历史版本对 K8s 集群一律 skipTLSVerify，升级后默认开启校验；
+  // 存量集群保持旧行为（标记为跳过校验），由用户在编辑集群时显式关闭。
+  for (const c of store.clusters) {
+    if (c.insecureSkipTlsVerify === undefined) c.insecureSkipTlsVerify = true
+  }
   // 旧数据迁移：历史版本曾明文存通知渠道签名密钥，此处一次性加密为 secretEnc（不落明文）。
+  // 加密失败（如密钥文件不可写）时保留明文字段，下次启动重试迁移；绝不先删明文再失败。
   for (const c of store.notificationChannels) {
     if (c.secret && !c.secretEnc) {
-      c.secretEnc = encrypt(c.secret)
-      delete c.secret
+      try {
+        c.secretEnc = encrypt(c.secret)
+        delete c.secret
+      } catch (e) {
+        logger.error(`[memoryStore] 通知渠道签名密钥迁移加密失败，保留明文待重试：${e instanceof Error ? e.message : String(e)}`)
+      }
     }
   }
   schedulePersist(store)
 } else {
+  // 播种即代表当前没有可用数据。若此前存在数据文件（损坏/无法解析），
+  // 属于数据丢失事故：响亮记录 + 留存告警文件，绝不能只默默回到默认账号。
+  const outcome = getLoadOutcome()
+  if (outcome === 'corrupt') {
+    logger.error('[memoryStore] store.json 及其备份均无法读取，已隔离坏文件并以初始数据启动；请检查数据目录下的 *.corrupt-* 文件抢救数据')
+    try {
+      const dir = process.env.OPS_DATA_DIR || path.join(os.homedir(), '.ops-platform')
+      fs.writeFileSync(
+        path.join(dir, 'DATA_RECOVERY_WARNING.txt'),
+        `${new Date().toISOString()} store.json 损坏，平台以初始数据启动。同目录 *.corrupt-* 文件为原数据，请勿删除，可联系管理员尝试人工恢复。\n`
+      )
+    } catch {
+      /* 告警文件写失败不影响启动 */
+    }
+  }
   seed()
   schedulePersist(store)
 }
@@ -364,6 +394,14 @@ export const memoryStore = {
     const i = store.assets.findIndex((x) => x.id === id)
     if (i < 0) return false
     store.assets.splice(i, 1)
+    // 同步清理该资产的时序历史，避免已删除资产的曲线永久留在 metrics/health.json
+    try {
+      metricSeriesStore.dropSeries(id)
+      healthStore.dropHealth('db', id)
+      healthStore.dropHealth('cluster', id)
+    } catch {
+      /* 时序存储未初始化时忽略 */
+    }
     persist()
     return true
   },
@@ -372,6 +410,9 @@ export const memoryStore = {
   getAlerts: (): Alert[] => store.alerts,
   addAlert: (a: Alert): Alert => {
     store.alerts.push(a)
+    // 环形上限：告警风暴/长期运行时 store.json 不得被告警历史无限膨胀
+    // （保留最新 1000 条；已解决告警可随时删除，旧告警价值随时间衰减）
+    if (store.alerts.length > 1000) store.alerts.splice(0, store.alerts.length - 1000)
     persist()
     return a
   },
@@ -452,6 +493,11 @@ export const memoryStore = {
     const i = store.clusters.findIndex((x) => x.id === id)
     if (i < 0) return false
     store.clusters.splice(i, 1)
+    try {
+      healthStore.dropHealth('cluster', id)
+    } catch {
+      /* ignore */
+    }
     persist()
     return true
   },
@@ -518,6 +564,11 @@ export const memoryStore = {
     const i = store.dbConnections.findIndex((x) => x.id === id)
     if (i < 0) return false
     store.dbConnections.splice(i, 1)
+    try {
+      healthStore.dropHealth('db', id)
+    } catch {
+      /* ignore */
+    }
     persist()
     return true
   },

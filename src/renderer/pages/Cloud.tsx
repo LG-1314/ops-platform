@@ -39,6 +39,7 @@ import {
   History as IconHistory,
 } from '@mui/icons-material'
 import { api } from '../../capabilities/bus'
+import PageHeader from '../components/PageHeader'
 import type {
   CloudAccount,
   CloudChangeLog,
@@ -109,6 +110,8 @@ export default function Cloud() {
   async function onResources(acc: CloudAccount) {
     setError(null)
     setResourcesAccount(acc)
+    // 先清空上一账号的资源，避免新账号加载完成前展示旧账号的实例/到期统计
+    setResources(null)
     await fetchResources(acc)
   }
 
@@ -181,8 +184,8 @@ export default function Cloud() {
   async function onSubmit() {
     setSubmitting(true)
     setError(null)
+    let credentialId: string | undefined
     try {
-      let credentialId: string | undefined
       if (form.accessKey && form.secretKey) {
         const cred = await api.credentials.create({
           name: `${form.name} 云凭据`,
@@ -206,6 +209,10 @@ export default function Cloud() {
       setForm({ name: '', provider: 'tencent', region: 'ap-guangzhou', accessKey: '', secretKey: '' })
       await load()
     } catch (e) {
+      // 两段式创建（先凭据后账号）：账号失败时回收刚建的凭据，避免孤儿凭据
+      if (credentialId && !editingId) {
+        await api.credentials.remove(credentialId).catch(() => {})
+      }
       setError((e as Error).message)
     } finally {
       setSubmitting(false)
@@ -214,24 +221,21 @@ export default function Cloud() {
 
   return (
     <Box>
-      <Stack direction="row" justifyContent="space-between" alignItems="center" mb={2}>
-        <Box>
-          <Typography variant="h5" sx={{ fontWeight: 700 }}>
-            云资源管理
-          </Typography>
-          <Typography variant="body2" sx={{ color: theme.palette.text.secondary }}>
-            纳管腾讯云 / 阿里云账号，实时拉取 CVM / ECS 实例资产
-          </Typography>
-        </Box>
-        <Stack direction="row" spacing={1}>
-          <Button startIcon={<IconRefresh />} onClick={() => void load()} color="inherit">
-            刷新
-          </Button>
-          <Button variant="contained" startIcon={<IconAdd />} onClick={openAdd}>
-            添加账号
-          </Button>
-        </Stack>
-      </Stack>
+      {/* 与其他 21 页统一使用 PageHeader（此前为本页手写标题，样式不一致） */}
+      <PageHeader
+        title="云资源管理"
+        subtitle="纳管腾讯云 / 阿里云账号，实时拉取 CVM / ECS 实例资产"
+        actions={
+          <Stack direction="row" spacing={1}>
+            <Button startIcon={<IconRefresh />} onClick={() => void load()} color="inherit">
+              刷新
+            </Button>
+            <Button variant="contained" startIcon={<IconAdd />} onClick={openAdd}>
+              添加账号
+            </Button>
+          </Stack>
+        }
+      />
 
       {error && (
         <Alert severity="error" sx={{ mb: 2 }}>
@@ -274,7 +278,7 @@ export default function Cloud() {
                   <TableCell>
                     <Chip size="small" label={providerLabel(a.provider)} />
                   </TableCell>
-                  <TableCell sx={{ fontFamily: 'monospace' }}>{a.region || '-'}</TableCell>
+                  <TableCell sx={{ fontFamily: 'var(--font-mono)' }}>{a.region || '-'}</TableCell>
                   <TableCell>{a.credentialId ? '已配置' : '未配置'}</TableCell>
                   <TableCell align="right">
                     <Tooltip title="查看资源">
@@ -305,6 +309,9 @@ export default function Cloud() {
         <DialogTitle>{editingId ? '编辑云账号' : '添加云账号'}</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
+            {error && (
+              <Alert severity="error">{error}</Alert>
+            )}
             <TextField
               label="名称"
               fullWidth
@@ -329,13 +336,13 @@ export default function Cloud() {
               placeholder={form.provider === 'tencent' ? 'ap-guangzhou' : 'cn-hangzhou'}
             />
             <TextField
-              label="AccessKey / SecretId"
+              label={editingId ? 'AccessKey / SecretId（留空保持不变）' : 'AccessKey / SecretId'}
               fullWidth
               value={form.accessKey}
               onChange={(e) => setForm((f) => ({ ...f, accessKey: e.target.value }))}
             />
             <TextField
-              label="SecretKey"
+              label={editingId ? 'SecretKey（留空保持不变）' : 'SecretKey'}
               type="password"
               fullWidth
               value={form.secretKey}
@@ -344,13 +351,14 @@ export default function Cloud() {
           </Stack>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setOpen(false)}>取消</Button>
+          <Button onClick={() => setOpen(false)} disabled={submitting}>取消</Button>
+          {/* 编辑态允许只改名称/区域（密钥留空保持原凭据）；新建态必须完整填写 */}
           <Button
             variant="contained"
-            disabled={submitting || !form.name || !form.accessKey || !form.secretKey}
+            disabled={submitting || !form.name || (!editingId && (!form.accessKey || !form.secretKey))}
             onClick={() => void onSubmit()}
           >
-            保存
+            {submitting ? '保存中…' : '保存'}
           </Button>
         </DialogActions>
       </Dialog>
@@ -475,12 +483,12 @@ export default function Cloud() {
                           <TableCell>
                             <Chip size="small" label={r.type} />
                           </TableCell>
-                          <TableCell sx={{ fontFamily: 'monospace' }}>{r.region}</TableCell>
+                          <TableCell sx={{ fontFamily: 'var(--font-mono)' }}>{r.region}</TableCell>
                           <TableCell>{r.status}</TableCell>
-                          <TableCell sx={{ fontFamily: 'monospace' }}>
+                          <TableCell sx={{ fontFamily: 'var(--font-mono)' }}>
                             {r.extra?.CPU ? `${r.extra.CPU}核/${r.extra.Memory}GB` : '-'}
                           </TableCell>
-                          <TableCell sx={{ fontFamily: 'monospace' }}>
+                          <TableCell sx={{ fontFamily: 'var(--font-mono)' }}>
                             {r.monthlyCost ? `¥${r.monthlyCost}` : '-'}
                           </TableCell>
                           <TableCell>
@@ -527,7 +535,7 @@ export default function Cloud() {
                     )}
                     {accountChanges.slice(0, 20).map((c) => (
                       <TableRow key={c.id} hover>
-                        <TableCell sx={{ fontFamily: 'monospace', whiteSpace: 'nowrap' }}>
+                        <TableCell sx={{ fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>
                           {new Date(c.at).toLocaleString('zh-CN', { hour12: false })}
                         </TableCell>
                         <TableCell sx={{ fontWeight: 600 }}>{c.resourceName}</TableCell>

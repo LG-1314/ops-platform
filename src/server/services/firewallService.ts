@@ -318,8 +318,8 @@ export function resolveSshParams(assetId: string): SshConnectParams | null {
   const secret = asset.credentialId ? credentialService.decrypt(asset.credentialId) : undefined
   if (!asset.credentialId || !secret) return null
   return {
-    host: asset.host,
-    port: asset.port,
+    host: asset.ip || asset.host,
+    port: secret.port,
     username: secret.username,
     password: secret.password,
     privateKey: secret.privateKey,

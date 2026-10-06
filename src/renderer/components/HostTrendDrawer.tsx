@@ -90,8 +90,14 @@ export default function HostTrendDrawer({ open, asset, onClose }: Props) {
     } finally {
       setLoading(false)
     }
-  }, [asset, range, customFrom, customTo])
+  // 自定义起止时间不进依赖是刻意的：datetime-local 每敲一个字符都会触发 onChange，
+  // 逐键发起 /metrics/history 请求（并有竞态覆盖）；改为点「查询」按钮手动加载。
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [asset, range])
 
+  // 仅在抽屉打开 / 切换资产 / 切换预设区间时自动加载。
+  // 自定义起止时间不进依赖：datetime-local 每敲一个字符都会触发 onChange，
+  // 此前会逐键发起 /metrics/history 请求（并有竞态覆盖），改为点「查询」手动加载。
   useEffect(() => {
     if (open && asset) void load()
   }, [open, asset, load])
@@ -168,7 +174,7 @@ export default function HostTrendDrawer({ open, asset, onClose }: Props) {
           </IconButton>
         </Stack>
         {asset && (
-          <Typography variant="caption" color="text.secondary" sx={{ mb: 1.5, fontFamily: 'monospace' }}>
+          <Typography variant="caption" color="text.secondary" sx={{ mb: 1.5, fontFamily: 'var(--font-mono)' }}>
             {asset.host}:{asset.port ?? 22}
           </Typography>
         )}
@@ -248,7 +254,7 @@ export default function HostTrendDrawer({ open, asset, onClose }: Props) {
                   <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
                     <Typography variant="body2" sx={{ fontWeight: 600 }}>{s.label}</Typography>
                     {s.current != null && (
-                      <Typography variant="body2" sx={{ fontFamily: 'monospace', color: theme.palette.primary.main }}>
+                      <Typography variant="body2" sx={{ fontFamily: 'var(--font-mono)', color: theme.palette.primary.main }}>
                         {s.current}
                         {s.unit}
                       </Typography>

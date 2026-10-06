@@ -13,6 +13,19 @@ export function getToken(): string {
   return token
 }
 
+/** 常数时间令牌比较：长度打平后逐字节异或，避免逐字符串比较的时序侧信道。 */
+export function safeTokenEqual(a: string | undefined | null, b: string): boolean {
+  if (!a) return false
+  const ab = Buffer.from(a)
+  const bb = Buffer.from(b)
+  if (ab.length !== bb.length) {
+    // 长度不同仍做一次比较，抹平"长度直接失败"的时序差异
+    crypto.timingSafeEqual(bb, bb)
+    return false
+  }
+  return crypto.timingSafeEqual(ab, bb)
+}
+
 /** 携带令牌的请求头，供主进程 Node http 转发时附加。 */
 export const TOKEN_HEADER = 'x-ops-token'
 
@@ -20,15 +33,18 @@ export function authHeaders(): Record<string, string> {
   return { [TOKEN_HEADER]: getToken() }
 }
 
-/** 支持从请求头或查询参数（终端 WS 走 query）校验令牌。 */
+/**
+ * 校验令牌：只认请求头。终端 WebSocket 无法自定义握手头，由 index.ts 的
+ * verifyClient 直接用 query 参数 + safeTokenEqual 校验；HTTP 请求一律不再接受
+ * query 传令牌（URL 会进入各类日志/崩溃转储，属泄露面）。
+ */
 export function checkToken(req: {
   headers: Record<string, string | string[] | undefined>
   query?: Record<string, string | undefined>
 }): boolean {
   const headerVal = req.headers[TOKEN_HEADER]
   const fromHeader = Array.isArray(headerVal) ? headerVal[0] : headerVal
-  const fromQuery = req.query?.token
-  return fromHeader === getToken() || fromQuery === getToken()
+  return safeTokenEqual(fromHeader, getToken())
 }
 
 /**
@@ -45,7 +61,7 @@ export function requireWriteToken(req: Request, res: Response, next: NextFunctio
   if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return next()
   if (req.path === LOGIN_PATH) return next()
   if (process.env.NODE_ENV === 'production') {
-    if (checkToken({ headers: req.headers, query: req.query as Record<string, string | undefined> })) return next()
+    if (checkToken({ headers: req.headers })) return next()
     res.status(401).json({ code: 401, message: '未授权：请通过桌面应用访问（缺少应用令牌）', data: null })
     return
   }

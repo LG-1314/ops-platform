@@ -385,14 +385,14 @@ export default function Firewall() {
                           <TableCell>
                             <Chip size="small" label={r.protocol} variant="outlined" sx={{ height: 20, fontSize: 11 }} />
                           </TableCell>
-                          <TableCell sx={{ fontFamily: 'monospace', fontSize: 12 }}>{r.source || '*'}</TableCell>
-                          <TableCell sx={{ fontFamily: 'monospace', fontSize: 12 }}>{r.destination || '*'}</TableCell>
-                          <TableCell sx={{ fontFamily: 'monospace', fontSize: 12 }}>{r.port || (r.sport ? `sport:${r.sport}` : '*')}</TableCell>
+                          <TableCell sx={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{r.source || '*'}</TableCell>
+                          <TableCell sx={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{r.destination || '*'}</TableCell>
+                          <TableCell sx={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{r.port || (r.sport ? `sport:${r.sport}` : '*')}</TableCell>
                           <TableCell>{r.inInterface || (r.outInterface || '')}</TableCell>
                           <TableCell>
                             <Chip size="small" label={r.action} sx={{ height: 20, fontSize: 11, color: actionColor(r.action), borderColor: actionColor(r.action), bgcolor: actionColor(r.action) + '22' }} variant="outlined" />
                           </TableCell>
-                          <TableCell sx={{ fontFamily: 'monospace', fontSize: 12 }}>
+                          <TableCell sx={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
                             {r.packets != null ? `${r.packets} / ${fmtBytes(r.bytes)}` : '—'}
                           </TableCell>
                           <TableCell sx={{ maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.comment || '—'}</TableCell>
@@ -435,8 +435,8 @@ export default function Firewall() {
                         <TableCell>
                           <Chip size="small" label={p.protocol} color={p.protocol === 'tcp' ? 'primary' : 'default'} variant="outlined" sx={{ height: 20, fontSize: 11 }} />
                         </TableCell>
-                        <TableCell sx={{ fontFamily: 'monospace', fontSize: 12 }}>{p.address}</TableCell>
-                        <TableCell sx={{ fontFamily: 'monospace', fontWeight: 700, fontSize: 13 }}>{p.port}</TableCell>
+                        <TableCell sx={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{p.address}</TableCell>
+                        <TableCell sx={{ fontFamily: 'var(--font-mono)', fontWeight: 700, fontSize: 13 }}>{p.port}</TableCell>
                         <TableCell>{p.process}</TableCell>
                         <TableCell>{p.pid || '—'}</TableCell>
                       </TableRow>
@@ -482,11 +482,11 @@ export default function Firewall() {
                     <TableBody>
                       {data.connections.slice(0, 200).map((c, i) => (
                         <TableRow key={i} hover>
-                          <TableCell sx={{ fontFamily: 'monospace', fontSize: 12 }}>{c.protocol}</TableCell>
-                          <TableCell sx={{ fontFamily: 'monospace', fontSize: 12 }}>{c.localAddress}</TableCell>
-                          <TableCell sx={{ fontFamily: 'monospace', fontSize: 12 }}>{c.localPort}</TableCell>
-                          <TableCell sx={{ fontFamily: 'monospace', fontSize: 12 }}>{c.remoteAddress}</TableCell>
-                          <TableCell sx={{ fontFamily: 'monospace', fontSize: 12 }}>{c.remotePort}</TableCell>
+                          <TableCell sx={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{c.protocol}</TableCell>
+                          <TableCell sx={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{c.localAddress}</TableCell>
+                          <TableCell sx={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{c.localPort}</TableCell>
+                          <TableCell sx={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{c.remoteAddress}</TableCell>
+                          <TableCell sx={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{c.remotePort}</TableCell>
                           <TableCell>
                             <Chip
                               size="small"
@@ -603,11 +603,11 @@ export default function Firewall() {
                               <TableCell>
                                 <Chip size="small" label={r.action} sx={{ height: 20, fontSize: 11, color: actionColor(r.action), borderColor: actionColor(r.action), bgcolor: actionColor(r.action) + '22' }} variant="outlined" />
                               </TableCell>
-                              <TableCell sx={{ fontFamily: 'monospace', fontSize: 12 }}>{r.source || '*'}</TableCell>
-                              <TableCell sx={{ fontFamily: 'monospace', fontSize: 12 }}>{r.destination || '*'}</TableCell>
-                              <TableCell sx={{ fontFamily: 'monospace', fontSize: 12 }}>{r.port || (r.sport ? `sport:${r.sport}` : '*')}</TableCell>
-                              <TableCell sx={{ fontFamily: 'monospace', fontWeight: 700 }}>{r.packets}</TableCell>
-                              <TableCell sx={{ fontFamily: 'monospace' }}>{fmtBytes(r.bytes)}</TableCell>
+                              <TableCell sx={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{r.source || '*'}</TableCell>
+                              <TableCell sx={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{r.destination || '*'}</TableCell>
+                              <TableCell sx={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{r.port || (r.sport ? `sport:${r.sport}` : '*')}</TableCell>
+                              <TableCell sx={{ fontFamily: 'var(--font-mono)', fontWeight: 700 }}>{r.packets}</TableCell>
+                              <TableCell sx={{ fontFamily: 'var(--font-mono)' }}>{fmtBytes(r.bytes)}</TableCell>
                               <TableCell sx={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.comment || '—'}</TableCell>
                             </TableRow>
                           ))}
@@ -670,7 +670,7 @@ export default function Firewall() {
       <Dialog open={deleteTarget !== null} onClose={() => setDeleteTarget(null)} maxWidth="xs" fullWidth>
         <DialogTitle>确认删除规则</DialogTitle>
         <DialogContent>
-          <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: 12, wordBreak: 'break-all', bgcolor: 'action.hover', p: 1, borderRadius: 1 }}>
+          <Typography variant="body2" sx={{ fontFamily: 'var(--font-mono)', fontSize: 12, wordBreak: 'break-all', bgcolor: 'action.hover', p: 1, borderRadius: 1 }}>
             {deleteTarget}
           </Typography>
           <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>

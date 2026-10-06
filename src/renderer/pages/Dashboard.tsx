@@ -62,6 +62,14 @@ function levelStatus(level: string): Status {
 
 const LEVEL_ORDER: Alert['level'][] = ['P0', 'P1', 'P2', 'P3']
 
+// 告警状态中文映射（此前直接展示英文枚举 active/ack）
+const ALERT_STATE_LABEL: Record<string, string> = {
+  active: '未处理',
+  ack: '已确认',
+  silenced: '已静默',
+  resolved: '已解决',
+}
+
 // 带超时的 Promise.all：避免能力总线偶发不可达时无限 loading 黑屏。
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([
@@ -268,7 +276,12 @@ export default function Dashboard() {
     {
       key: 'state',
       label: '状态',
-      render: (r) => <StatusBadge status={r.state === 'active' ? 'warn' : 'ok'} label={r.state} />,
+      render: (r) => (
+        <StatusBadge
+          status={r.state === 'active' ? 'error' : r.state === 'ack' ? 'warn' : r.state === 'silenced' ? 'unknown' : 'ok'}
+          label={ALERT_STATE_LABEL[r.state] ?? r.state}
+        />
+      ),
     },
     {
       key: 'createdAt',
@@ -659,7 +672,7 @@ export default function Dashboard() {
             <Typography
               variant="body2"
               component="div"
-              sx={{ lineHeight: 1.8, whiteSpace: 'pre-wrap', wordBreak: 'break-word', '& code': { fontFamily: 'monospace', bgcolor: 'action.hover', px: 0.5, borderRadius: 0.5, fontSize: 13 } }}
+              sx={{ lineHeight: 1.8, whiteSpace: 'pre-wrap', wordBreak: 'break-word', '& code': { fontFamily: 'var(--font-mono)', bgcolor: 'action.hover', px: 0.5, borderRadius: 0.5, fontSize: 13 } }}
             >
               {report}
             </Typography>

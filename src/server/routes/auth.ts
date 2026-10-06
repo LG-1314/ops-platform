@@ -9,10 +9,12 @@ export const authRouter = Router()
 
 // —— 登录失败限流：按用户名维度滑动窗口，防暴力破解 ——
 // 规则：10 分钟窗口内失败 ≥5 次 → 锁定 10 分钟，返回 429。
+// 追踪表上限 1000：随机用户名字典轰击不得让 Map 无限增长（内存泄漏防线）。
 const loginAttempts = new Map<string, { count: number; firstAt: number; lockedUntil: number }>()
 const MAX_FAILS = 5
 const WINDOW_MS = 10 * 60 * 1000
 const LOCK_MS = 10 * 60 * 1000
+const MAX_TRACKED = 1000
 
 function lockRemainMs(username: string): number {
   const rec = loginAttempts.get(username)
@@ -30,6 +32,11 @@ function recordLoginFail(username: string): void {
   const now = Date.now()
   const rec = loginAttempts.get(username)
   if (!rec || now - rec.firstAt > WINDOW_MS) {
+    // 容量保护：超出追踪上限时淘汰最早插入的记录（Map 保持插入序）
+    if (!loginAttempts.has(username) && loginAttempts.size >= MAX_TRACKED) {
+      const oldest = loginAttempts.keys().next().value
+      if (oldest !== undefined) loginAttempts.delete(oldest)
+    }
     loginAttempts.set(username, { count: 1, firstAt: now, lockedUntil: 0 })
     return
   }

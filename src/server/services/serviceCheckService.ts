@@ -56,7 +56,7 @@ function assetSshParams(asset: Asset) {
   if (!secret?.username) throw new Error(`资产 ${asset.name} 的 SSH 凭据不存在或已失效`)
   return {
     host: asset.ip || asset.host,
-    port: 22,
+    port: secret.port ?? 22,
     username: secret.username,
     password: secret.password,
     privateKey: secret.privateKey,

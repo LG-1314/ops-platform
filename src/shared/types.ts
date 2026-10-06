@@ -193,6 +193,8 @@ export interface ClusterInfo {
   status: Status
   credentialId?: string
   authType?: 'token' | 'kubeconfig' | 'credential'
+  /** 跳过 TLS 证书校验（自签名集群）。默认 false；仅用户显式勾选时为 true。 */
+  insecureSkipTlsVerify?: boolean
 }
 export interface ClusterNode {
   name: string

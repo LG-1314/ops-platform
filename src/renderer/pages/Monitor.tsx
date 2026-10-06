@@ -74,6 +74,8 @@ export default function Monitor() {
   const [summary, setSummary] = useState<MonitorSummary | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  // 单主机"立即采集"busy 态（此前无禁用，双击会触发重复 SSH 采集）
+  const [collectingId, setCollectingId] = useState('')
   // 页内抽屉：趋势 / 终端（不再跳转其他页签，看完即关）
   const [trendAsset, setTrendAsset] = useState<Asset | null>(null)
   const [termHost, setTermHost] = useState<MonitorSummary['hosts'][number] | null>(null)
@@ -238,7 +240,7 @@ export default function Monitor() {
                           <IconHost sx={{ color: theme.palette.primary.main, fontSize: 20 }} />
                           <Box sx={{ minWidth: 0 }}>
                             <Typography variant="subtitle2" noWrap>{h.name}</Typography>
-                            <Typography variant="caption" color="text.secondary" noWrap sx={{ fontFamily: 'monospace' }}>
+                            <Typography variant="caption" color="text.secondary" noWrap sx={{ fontFamily: 'var(--font-mono)' }}>
                               {h.host ?? ''}{h.port ? `:${h.port}` : ''}
                             </Typography>
                           </Box>
@@ -262,12 +264,12 @@ export default function Monitor() {
                           />
                         </Tooltip>
                         {h.latencyMs != null && (
-                          <Typography variant="caption" color="text.secondary" sx={{ fontFamily: 'monospace' }}>
+                          <Typography variant="caption" color="text.secondary" sx={{ fontFamily: 'var(--font-mono)' }}>
                             {h.latencyMs}ms
                           </Typography>
                         )}
                         {h.lastCheckAt && (
-                          <Typography variant="caption" color="text.disabled" sx={{ ml: 'auto', fontFamily: 'monospace', fontSize: 10 }}>
+                          <Typography variant="caption" color="text.disabled" sx={{ ml: 'auto', fontFamily: 'var(--font-mono)', fontSize: 10 }}>
                             {fmtTime(h.lastCheckAt)}
                           </Typography>
                         )}
@@ -281,10 +283,10 @@ export default function Monitor() {
                       {/* 网络速率 */}
                       {(h.netRx != null || h.netTx != null) && (
                         <Stack direction="row" spacing={2} sx={{ mt: 0.5 }}>
-                          <Typography variant="caption" color="text.secondary" sx={{ fontFamily: 'monospace' }}>
+                          <Typography variant="caption" color="text.secondary" sx={{ fontFamily: 'var(--font-mono)' }}>
                             ↓ {h.netRx != null ? `${h.netRx.toFixed(1)} KB/s` : '-'}
                           </Typography>
-                          <Typography variant="caption" color="text.secondary" sx={{ fontFamily: 'monospace' }}>
+                          <Typography variant="caption" color="text.secondary" sx={{ fontFamily: 'var(--font-mono)' }}>
                             ↑ {h.netTx != null ? `${h.netTx.toFixed(1)} KB/s` : '-'}
                           </Typography>
                         </Stack>
@@ -292,7 +294,7 @@ export default function Monitor() {
 
                       {/* 采集时间 */}
                       {h.collectedAt && (
-                        <Typography variant="caption" color="text.disabled" sx={{ display: 'block', mt: 0.5, fontFamily: 'monospace', fontSize: 10 }}>
+                        <Typography variant="caption" color="text.disabled" sx={{ display: 'block', mt: 0.5, fontFamily: 'var(--font-mono)', fontSize: 10 }}>
                           采集于 {fmtTime(h.collectedAt)}
                         </Typography>
                       )}
@@ -312,17 +314,26 @@ export default function Monitor() {
                           </IconButton>
                         </Tooltip>
                         {h.credentialId && (
-                          <Tooltip title="立即采集">
-                            <IconButton size="small" onClick={async () => {
-                              try {
-                                await api.ssh.collect({ host: h.host ?? '', port: h.port, credentialId: h.credentialId, assetId: h.id })
-                                load()
-                              } catch (e) {
-                                setError((e as ApiClientError).detail || (e as Error).message || '采集失败，请检查主机连通性与 SSH 凭据')
-                              }
-                            }}>
-                              <IconCollect fontSize="small" />
-                            </IconButton>
+                          <Tooltip title={collectingId === h.id ? '采集中…' : '立即采集'}>
+                            <span>
+                              <IconButton
+                                size="small"
+                                disabled={collectingId === h.id}
+                                onClick={async () => {
+                                  setCollectingId(h.id)
+                                  try {
+                                    await api.ssh.collect({ host: h.host ?? '', credentialId: h.credentialId, assetId: h.id })
+                                    load()
+                                  } catch (e) {
+                                    setError((e as ApiClientError).detail || (e as Error).message || '采集失败，请检查主机连通性与 SSH 凭据')
+                                  } finally {
+                                    setCollectingId('')
+                                  }
+                                }}
+                              >
+                                {collectingId === h.id ? <CircularProgress size={16} /> : <IconCollect fontSize="small" />}
+                              </IconButton>
+                            </span>
                           </Tooltip>
                         )}
                       </Stack>

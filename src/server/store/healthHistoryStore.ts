@@ -5,6 +5,8 @@ import { readJSONFile, writeJSONAtomic } from './persist'
 // 环形缓冲 1440 点 + health.json 持久化
 const FILE = 'health.json'
 const MAX_POINTS = 1440
+const MAX_KEYS = 2000
+const RETENTION_MS = 7 * 24 * 3600 * 1000
 
 export interface HealthPoint {
   assetId: string
@@ -16,9 +18,14 @@ export interface HealthPoint {
 
 const series = new Map<string, HealthPoint[]>()
 
+// 与 metricSeriesStore 相同的加载守卫：加载前 flush 不得用空 Map 覆盖磁盘文件
+let loaded = false
+let dirty = false
+
 let timer: ReturnType<typeof setTimeout> | null = null
 
 function scheduleSave(): void {
+  dirty = true
   if (timer) return
   timer = setTimeout(() => {
     timer = null
@@ -29,10 +36,25 @@ function scheduleSave(): void {
 export function loadHealthSeries(): void {
   const raw = readJSONFile(FILE)
   if (raw && typeof raw === 'object') {
+    const now = Date.now()
     for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
-      if (Array.isArray(v)) series.set(k, v as HealthPoint[])
+      if (!Array.isArray(v) || v.length === 0) continue
+      const arr = (v as HealthPoint[]).filter(
+        (p) => p && typeof p === 'object' && typeof p.checkedAt === 'string'
+      )
+      if (arr.length === 0) continue
+      if (arr.length > MAX_POINTS) arr.splice(0, arr.length - MAX_POINTS)
+      const newest = Date.parse(arr[arr.length - 1].checkedAt)
+      if (Number.isFinite(newest) && now - newest > RETENTION_MS) continue
+      series.set(k, arr)
     }
   }
+  loaded = true
+}
+
+/** 删除 DB 连接/集群时同步清理对应健康时序。 */
+export function dropHealth(kind: 'db' | 'cluster', assetId: string): void {
+  if (series.delete(`${kind}:${assetId}`)) scheduleSave()
 }
 
 export function pushHealth(p: HealthPoint): void {
@@ -41,6 +63,18 @@ export function pushHealth(p: HealthPoint): void {
   arr.push(p)
   if (arr.length > MAX_POINTS) arr.splice(0, arr.length - MAX_POINTS)
   series.set(key, arr)
+  if (series.size > MAX_KEYS) {
+    let oldestKey = ''
+    let oldestT = Number.POSITIVE_INFINITY
+    for (const [k, v] of series) {
+      const t = Date.parse(v[v.length - 1]?.checkedAt || '')
+      if (t < oldestT) {
+        oldestT = t
+        oldestKey = k
+      }
+    }
+    if (oldestKey && oldestKey !== key) series.delete(oldestKey)
+  }
   scheduleSave()
 }
 
@@ -66,7 +100,8 @@ export function flushHealth(): void {
     clearTimeout(timer)
     timer = null
   }
+  if (!loaded || !dirty) return
   writeJSONAtomic(FILE, Object.fromEntries(series))
 }
 
-export const healthStore = { loadHealthSeries, pushHealth, queryHealth, flushHealth }
+export const healthStore = { loadHealthSeries, pushHealth, queryHealth, dropHealth, flushHealth }

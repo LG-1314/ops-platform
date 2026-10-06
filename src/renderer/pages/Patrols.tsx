@@ -15,12 +15,12 @@ import {
   DialogContent,
   DialogActions,
   TextField,
-  Tabs,
-  Tab,
   IconButton,
   Tooltip,
   Switch,
   Checkbox,
+  ToggleButton,
+  ToggleButtonGroup,
 } from '@mui/material'
 import { PlayArrow, Add, Edit as IconEdit, Delete as IconDelete, Schedule as IconSchedule } from '@mui/icons-material'
 import { api } from '../../capabilities/bus'
@@ -28,6 +28,7 @@ import type { PatrolTask, PatrolLayer, PatrolRun, Status } from '@shared/types'
 import PageHeader from '../components/PageHeader'
 import StatusBadge from '../components/StatusBadge'
 import EmptyState from '../components/EmptyState'
+import ConfirmDialog from '../components/ConfirmDialog'
 import { Alert as MuiAlert } from '@mui/material'
 
 const LAYER_LABEL: Record<PatrolLayer, string> = {
@@ -45,6 +46,14 @@ function runStatus(s: string): Status {
   if (s === 'running') return 'warn'
   if (s === 'success') return 'ok'
   return 'unknown'
+}
+
+// 执行状态中文映射（此前直接展示英文枚举 running/success/failed）
+const RUN_LABEL: Record<string, string> = {
+  running: '执行中',
+  success: '成功',
+  failed: '失败',
+  idle: '待执行',
 }
 
 interface TaskForm {
@@ -65,6 +74,9 @@ export default function Patrols() {
   const [error, setError] = useState('')
   const [selected, setSelected] = useState<string[]>([])
   const [batchRunning, setBatchRunning] = useState(false)
+  // 删除确认（单删 + 批量删均不可逆，此前一次点击直接执行）
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [batchConfirm, setBatchConfirm] = useState(false)
 
   const load = () => {
     setLoading(true)
@@ -107,16 +119,22 @@ export default function Patrols() {
       setError('任务名称必填')
       return
     }
-    setError('')
-    try {
-      const payload = { name: form.name.trim(), cron: form.cron.trim(), layers: form.layers }
-      if (editingId) await api.patrols.update(editingId, payload)
-      else await api.patrols.create(payload)
-      setOpen(false)
-      load()
-    } catch (e) {
-      setError((e as Error).message || '保存失败')
-    }
+      setError('')
+      // cron 5 段格式校验：非法表达式会被调度器静默忽略（永远不触发），必须在前端拦住
+      const cronParts = form.cron.trim().split(/\s+/)
+      if (cronParts.length !== 5) {
+        setError('Cron 表达式需为 5 段格式（分 时 日 月 周），例如：0 * * * *')
+        return
+      }
+      try {
+        const payload = { name: form.name.trim(), cron: form.cron.trim(), layers: form.layers }
+        if (editingId) await api.patrols.update(editingId, payload)
+        else await api.patrols.create(payload)
+        setOpen(false)
+        load()
+      } catch (e) {
+        setError((e as Error).message || '保存失败')
+      }
   }
 
   const onToggle = async (t: PatrolTask, enabled: boolean) => {
@@ -129,8 +147,10 @@ export default function Patrols() {
   }
 
   const onDelete = async (id: string) => {
+    setConfirmDeleteId(null)
     try {
       await api.patrols.remove(id)
+      setSelected((s) => s.filter((x) => x !== id))
       load()
     } catch (e) {
       setError((e as Error).message || '删除失败')
@@ -146,6 +166,7 @@ export default function Patrols() {
   }
 
   const runBatch = async (action: 'enable' | 'disable' | 'delete') => {
+    setBatchConfirm(false)
     setBatchRunning(true)
     setError('')
     const failed: string[] = []
@@ -223,7 +244,7 @@ export default function Patrols() {
                 variant="outlined"
                 color="error"
                 disabled={selected.length === 0 || batchRunning}
-                onClick={() => runBatch('delete')}
+                onClick={() => setBatchConfirm(true)}
               >
                 批量删除
               </Button>
@@ -260,7 +281,7 @@ export default function Patrols() {
                   <Stack direction="row" justifyContent="space-between" alignItems="center">
                     <Typography variant="subtitle1">{t.name}</Typography>
                     <Stack direction="row" spacing={1} alignItems="center">
-                      <StatusBadge status={runStatus(t.status)} label={t.status} />
+                      <StatusBadge status={runStatus(t.status)} label={RUN_LABEL[t.status] ?? t.status} />
                       <Switch size="small" checked={t.enabled} onChange={(_, v) => onToggle(t, v)} />
                       <Checkbox
                         size="small"
@@ -297,7 +318,7 @@ export default function Patrols() {
                         </IconButton>
                       </Tooltip>
                       <Tooltip title="删除">
-                        <IconButton size="small" color="error" onClick={() => onDelete(t.id)}>
+                        <IconButton size="small" color="error" onClick={() => setConfirmDeleteId(t.id)}>
                           <IconDelete fontSize="small" />
                         </IconButton>
                       </Tooltip>
@@ -320,7 +341,7 @@ export default function Patrols() {
                           }}
                         >
                           <Stack direction="row" spacing={1} alignItems="center">
-                            <StatusBadge status={runStatus(h.status)} label={h.status} />
+                            <StatusBadge status={runStatus(h.status)} label={RUN_LABEL[h.status] ?? h.status} />
                             <Typography variant="caption">
                               {new Date(h.startedAt).toLocaleString()}
                             </Typography>
@@ -359,16 +380,20 @@ export default function Patrols() {
             <Typography variant="caption" color="text.secondary">
               巡检层级（可多选）
             </Typography>
-            <Tabs value={0} variant="scrollable" sx={{ borderBottom: 1, borderColor: 'divider' }}>
+            {/* 此前误用 Tabs 组件做多选：第一个 Tab 永远呈选中态，语义也不对；改用多选按钮组 */}
+            <ToggleButtonGroup size="small" aria-label="巡检层级多选">
               {ALL_LAYERS.map((l) => (
-                <Tab
+                <ToggleButton
                   key={l}
-                  label={LAYER_LABEL[l]}
-                  sx={{ fontWeight: form.layers.includes(l) ? 700 : 400 }}
+                  value={l}
+                  selected={form.layers.includes(l)}
                   onClick={() => toggleLayer(l)}
-                />
+                  sx={{ textTransform: 'none', fontWeight: form.layers.includes(l) ? 700 : 400 }}
+                >
+                  {LAYER_LABEL[l]}
+                </ToggleButton>
               ))}
-            </Tabs>
+            </ToggleButtonGroup>
             <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
               {form.layers.map((l) => (
                 <Chip key={l} size="small" label={LAYER_LABEL[l]} color="primary" onDelete={() => toggleLayer(l)} />
@@ -383,6 +408,24 @@ export default function Patrols() {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* 单任务删除确认 */}
+      <ConfirmDialog
+        open={!!confirmDeleteId}
+        title="删除巡检任务"
+        content="确定删除该巡检任务吗？其历史执行记录将一并移除。"
+        onConfirm={() => confirmDeleteId && void onDelete(confirmDeleteId)}
+        onClose={() => setConfirmDeleteId(null)}
+      />
+
+      {/* 批量删除确认 */}
+      <ConfirmDialog
+        open={batchConfirm}
+        title="批量删除巡检任务"
+        content={`确定删除选中的 ${selected.length} 个巡检任务吗？此操作不可恢复。`}
+        onConfirm={() => void runBatch('delete')}
+        onClose={() => setBatchConfirm(false)}
+      />
     </Box>
   )
 }

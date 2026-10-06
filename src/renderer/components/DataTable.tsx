@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import {
   Paper,
   Table,
@@ -18,6 +18,8 @@ export interface Column<T> {
   render?: (row: T) => ReactNode
   width?: number | string
   align?: 'left' | 'right' | 'center'
+  /** 数值列：等宽字体 + tabular-nums（components-spec §2），通常配合 align="right" */
+  numeric?: boolean
 }
 
 interface Props<T> {
@@ -39,17 +41,17 @@ export default function DataTable<T extends object>({
   const [page, setPage] = useState(0)
   const paginated = pageSize > 0
 
-  // 数据变化时回到首页，避免停留在超界页
-  useEffect(() => {
-    setPage(0)
-  }, [rows])
-
   const total = rows.length
-  const start = paginated ? page * pageSize : 0
+  const maxPage = paginated ? Math.max(0, Math.ceil(total / pageSize) - 1) : 0
+  // 轮询刷新（如资产 15s 自动刷新）会传 入新的 rows 数组，但条数通常不变；
+  // 此前"数据一变就回第一页"会把正在看第 3 页的用户每 15 秒踢回首页。
+  // 改为只在页码超界（删除/过滤后）时收敛到最后一页。
+  const safePage = Math.min(page, maxPage)
+  const start = paginated ? safePage * pageSize : 0
   const visible = paginated ? rows.slice(start, start + pageSize) : rows
 
   return (
-    <Paper sx={{ borderRadius: 2, overflow: 'hidden' }}>
+    <Paper sx={{ overflow: 'hidden' }}>
       <Box sx={{ maxHeight, overflow: 'auto' }}>
         <Table size="small" stickyHeader>
           <TableHead>
@@ -85,7 +87,15 @@ export default function DataTable<T extends object>({
                       <TableCell
                         key={c.key}
                         align={c.align}
-                        sx={{ whiteSpace: 'nowrap' }}
+                        sx={{
+                          whiteSpace: 'nowrap',
+                          ...(c.numeric
+                            ? {
+                                fontFamily: 'var(--font-mono)',
+                                fontVariantNumeric: 'tabular-nums',
+                              }
+                            : null),
+                        }}
                       >
                         {c.render ? c.render(row) : (rowRecord[c.key] as ReactNode)}
                       </TableCell>
@@ -101,7 +111,7 @@ export default function DataTable<T extends object>({
         <TablePagination
           component="div"
           count={total}
-          page={page}
+          page={safePage}
           onPageChange={(_e, p) => setPage(p)}
           rowsPerPage={pageSize}
           rowsPerPageOptions={[]}

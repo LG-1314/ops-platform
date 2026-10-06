@@ -66,6 +66,8 @@ export default function Hosts() {
   const [sample, setSample] = useState<HostMetricSample | null>(null)
   const [sampleOpen, setSampleOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  // 添加主机弹窗内的提交错误（页面级错误会被弹窗遮挡）
+  const [formError, setFormError] = useState('')
   const [collectingId, setCollectingId] = useState('')
   const [collectingAll, setCollectingAll] = useState(false)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
@@ -130,7 +132,7 @@ export default function Hosts() {
     setError(null)
     setCollectingId(host.id)
     try {
-      const s = await api.ssh.collect({ host: host.host, port: host.port, credentialId: host.credentialId, assetId: host.id })
+      const s = await api.ssh.collect({ host: host.ip || host.host, credentialId: host.credentialId, assetId: host.id })
       setSample(s)
       setSampleOpen(true)
       await load()
@@ -153,7 +155,7 @@ export default function Hosts() {
     try {
       for (const h of targets) {
         try {
-          await api.ssh.collect({ host: h.host, port: h.port, credentialId: h.credentialId, assetId: h.id })
+          await api.ssh.collect({ host: h.ip || h.host, credentialId: h.credentialId, assetId: h.id })
         } catch {
           /* 单台失败继续 */
         }
@@ -209,13 +211,22 @@ export default function Hosts() {
   async function onSubmit() {
     setSubmitting(true)
     setError(null)
+    setFormError('')
+    // 端口防呆：清空输入会得到 NaN/0，直接拦在表单层
+    const port = Number(form.port)
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      setFormError('SSH 端口需为 1-65535 的整数')
+      setSubmitting(false)
+      return
+    }
+    let credentialId: string | undefined
     try {
-      let credentialId: string | undefined
       if (form.username && (form.password || form.privateKey)) {
         const cred = await api.credentials.create({
           name: `${form.name || form.host} SSH 凭据`,
           kind: 'ssh',
           host: form.host,
+          port, // SSH 端口属于凭据（此前误写进 asset.port，被当成探测端口）
           username: form.username,
           password: form.authMethod === 'password' ? form.password : undefined,
           privateKey: form.authMethod === 'privateKey' ? form.privateKey : undefined,
@@ -226,7 +237,6 @@ export default function Hosts() {
         name: form.name || form.host,
         type: 'server',
         host: form.host,
-        port: form.port,
         source: 'ssh',
         tags: ['ssh'],
         credentialId,
@@ -235,7 +245,10 @@ export default function Hosts() {
       setForm({ name: '', host: '', port: 22, authMethod: 'password', username: '', password: '', privateKey: '' })
       await load()
     } catch (e) {
-      setError((e as Error).message)
+      // 两段式创建：资产失败时回收刚创建的凭据，避免孤儿凭据留在列表
+      if (credentialId) await api.credentials.remove(credentialId).catch(() => {})
+      // 错误展示在弹窗内：页面级 Alert 会被打开的弹窗遮挡，用户只会看到"保存没反应"
+      setFormError((e as Error).message || '保存失败')
     } finally {
       setSubmitting(false)
     }
@@ -381,6 +394,11 @@ export default function Hosts() {
       <Dialog open={open} onClose={() => setOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle>添加主机</DialogTitle>
         <DialogContent>
+          {formError && (
+            <Alert severity="error" sx={{ mt: 1 }} onClose={() => setFormError('')}>
+              {formError}
+            </Alert>
+          )}
           <Grid container spacing={2} sx={{ mt: 0.5 }}>
             <Grid item xs={12} sm={6}>
               <TextField
@@ -408,6 +426,7 @@ export default function Hosts() {
                 fullWidth
                 size="small"
                 value={form.port}
+                error={formError.includes('端口')}
                 onChange={(e) => setForm((f) => ({ ...f, port: Number(e.target.value) }))}
               />
             </Grid>
@@ -458,13 +477,13 @@ export default function Hosts() {
           </Grid>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setOpen(false)}>取消</Button>
+          <Button onClick={() => setOpen(false)} disabled={submitting}>取消</Button>
           <Button
             variant="contained"
             disabled={submitting || !form.host}
             onClick={() => void onSubmit()}
           >
-            保存
+            {submitting ? '保存中…' : '保存'}
           </Button>
         </DialogActions>
       </Dialog>
@@ -488,7 +507,7 @@ export default function Hosts() {
                   }}
                 />
                 {sample.hostname && (
-                  <Typography component="span" sx={{ ml: 1, color: theme.palette.text.secondary, fontFamily: 'monospace' }}>
+                  <Typography component="span" sx={{ ml: 1, color: theme.palette.text.secondary, fontFamily: 'var(--font-mono)' }}>
                     {sample.hostname}
                   </Typography>
                 )}

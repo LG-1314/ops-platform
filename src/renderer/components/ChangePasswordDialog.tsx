@@ -40,14 +40,16 @@ export default function ChangePasswordDialog({ open, onClose, force, onChanged }
 
   const handleClose = () => {
     if (loading) return
+    // 强制改密模式（首次登录）：后端已 403 锁死其它接口，这里同样不允许取消绕过
+    if (force && !ok) return
     reset()
     onClose()
   }
 
   const submit = async () => {
     setError('')
-    if (newPassword.length < 6) {
-      setError('新密码至少 6 位')
+    if (newPassword.length < 8) {
+      setError('新密码至少 8 位')
       return
     }
     if (newPassword !== confirm) {
@@ -70,13 +72,13 @@ export default function ChangePasswordDialog({ open, onClose, force, onChanged }
   }
 
   return (
-    <Dialog open={open} onClose={handleClose} maxWidth="xs" fullWidth>
-      <DialogTitle>{force ? '首次登录请修改默认密码' : '修改密码'}</DialogTitle>
-      <DialogContent>
-        <Stack spacing={2} sx={{ mt: 1 }}>
-          {force && !ok && (
-            <Alert severity="warning">检测到仍在使用默认密码，出于安全考虑请立即修改。</Alert>
-          )}
+      <Dialog open={open} onClose={handleClose} maxWidth="xs" fullWidth disableEscapeKeyDown={force && !ok}>
+        <DialogTitle>{force ? '首次登录请修改默认密码' : '修改密码'}</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            {force && !ok && (
+              <Alert severity="warning">检测到仍在使用默认密码。出于安全考虑，修改密码前其它功能不可用（服务端已强制拦截）。</Alert>
+            )}
           {error && <Alert severity="error">{error}</Alert>}
           {ok && <Alert severity="success">密码修改成功{force ? '，可关闭本窗口' : ''}。</Alert>}
           <TextField
@@ -88,7 +90,7 @@ export default function ChangePasswordDialog({ open, onClose, force, onChanged }
             onChange={(e) => setOldPassword(e.target.value)}
           />
           <TextField
-            label="新密码（至少 6 位）"
+            label="新密码（至少 8 位）"
             type="password"
             fullWidth
             value={newPassword}
@@ -107,7 +109,8 @@ export default function ChangePasswordDialog({ open, onClose, force, onChanged }
         </Stack>
       </DialogContent>
       <DialogActions>
-        <Button onClick={handleClose}>{ok ? '关闭' : '取消'}</Button>
+        {/* 强制模式未完成改密前不提供"取消"逃生口 */}
+        {(ok || !force) && <Button onClick={handleClose}>{ok ? '关闭' : '取消'}</Button>}
         {!ok && (
           <Button variant="contained" onClick={() => void submit()} disabled={loading || !oldPassword || !newPassword || !confirm}>
             {loading ? <CircularProgress size={16} /> : '保存'}

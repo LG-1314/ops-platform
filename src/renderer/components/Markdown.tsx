@@ -82,7 +82,7 @@ function renderInline(text: string, keyBase: string): ReactNode[] {
         <Typography
           component="code"
           key={`${keyBase}-c${idx}`}
-          sx={{ fontFamily: 'monospace', bgcolor: 'action.hover', px: 0.5, borderRadius: 0.5, fontSize: 13 }}
+          sx={{ fontFamily: 'var(--font-mono)', bgcolor: 'action.hover', px: 0.5, borderRadius: 0.5, fontSize: 13 }}
         >
           {p.slice(1, -1)}
         </Typography>,
@@ -166,7 +166,7 @@ function renderCodeBlock(block: Block, themeMode: string): ReactNode {
     >
       {block.lang && (
         <Box sx={{ px: 1.5, py: 0.5, borderBottom: 1, borderColor: 'divider', bgcolor: 'action.hover' }}>
-          <Typography variant="caption" sx={{ fontFamily: 'monospace', color: 'text.secondary' }}>
+          <Typography variant="caption" sx={{ fontFamily: 'var(--font-mono)', color: 'text.secondary' }}>
             {block.lang}
           </Typography>
         </Box>
@@ -177,7 +177,7 @@ function renderCodeBlock(block: Block, themeMode: string): ReactNode {
           m: 0,
           p: 1.5,
           overflow: 'auto',
-          fontFamily: 'monospace',
+          fontFamily: 'var(--font-mono)',
           fontSize: 12.5,
           lineHeight: 1.55,
           color: 'text.primary',

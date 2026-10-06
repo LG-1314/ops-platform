@@ -31,6 +31,7 @@ import {
 import { api } from '../../capabilities/bus'
 import type { GuardrailResult, GuardrailRun, DoloresRun, DoloresTool } from '@shared/types'
 import PageHeader from '../components/PageHeader'
+import ConfirmDialog from '../components/ConfirmDialog'
 
 const TOOL_META: { tool: DoloresTool; label: string; icon: React.ReactNode; desc: string }[] = [
   { tool: 'health', label: '健康检查', icon: <Favorite />, desc: '进程 / 内存 / 负载 / 数据目录' },
@@ -62,6 +63,8 @@ export default function OpsTools() {
   const [result, setResult] = useState<GuardrailResult | null>(null)
   const [history, setHistory] = useState<GuardrailRun[]>([])
   const [runningTool, setRunningTool] = useState<DoloresTool | null>(null)
+  // 目录清理确认（删除类操作，此前一次点击直接执行）
+  const [confirmClean, setConfirmClean] = useState(false)
   const [doloresLog, setDoloresLog] = useState<string[]>([])
   const [doloresHistory, setDoloresHistory] = useState<DoloresRun[]>([])
   const [error, setError] = useState('')
@@ -93,6 +96,7 @@ export default function OpsTools() {
   }
 
   const runTool = async (tool: DoloresTool) => {
+    // 删除类工具需要二次确认（调用方先弹 ConfirmDialog 再进到这里）
     setRunningTool(tool)
     setDoloresLog([])
     setError('')
@@ -105,6 +109,14 @@ export default function OpsTools() {
     } finally {
       setRunningTool(null)
     }
+  }
+
+  const confirmRunTool = (tool: DoloresTool) => {
+    if (tool === 'dir-clean') {
+      setConfirmClean(true)
+      return
+    }
+    void runTool(tool)
   }
 
   return (
@@ -245,7 +257,7 @@ export default function OpsTools() {
                   )
                 }
                 disabled={runningTool !== null}
-                onClick={() => runTool(t.tool)}
+                onClick={() => confirmRunTool(t.tool)}
               >
                 {t.label}
               </Button>
@@ -266,7 +278,7 @@ export default function OpsTools() {
                 variant="caption"
                 sx={{
                   color: theme.palette.mode === 'dark' ? '#9AA7C7' : 'text.secondary',
-                  fontFamily: 'monospace',
+                  fontFamily: 'var(--font-mono)',
                 }}
                 component="pre"
                 whiteSpace="pre-wrap"
@@ -339,6 +351,18 @@ export default function OpsTools() {
           )}
         </CardContent>
       </Card>
+
+      {/* 目录清理确认 */}
+      <ConfirmDialog
+        open={confirmClean}
+        title="执行目录清理"
+        content="确定清理平台临时文件吗？该操作会删除数据目录下的过期临时文件，不可恢复。"
+        onConfirm={() => {
+          setConfirmClean(false)
+          void runTool('dir-clean')
+        }}
+        onClose={() => setConfirmClean(false)}
+      />
     </Box>
   )
 }

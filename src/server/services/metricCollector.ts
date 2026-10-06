@@ -19,12 +19,16 @@ export async function collectAsset(assetId: string): Promise<void> {
   const asset = memoryStore.getAssets().find((a) => a.id === assetId)
   if (!asset || !asset.credentialId) return
   const secret = credentialService.decrypt(asset.credentialId)
-  if (!secret) return
+  if (!secret) {
+    // 凭据解密失败（密钥损坏/凭据被删）必须显式标记，否则资产永远停留在上次的"在线"状态
+    markAssetConnectionFailure(asset.id, '凭据缺失或无法解密，请重新关联 SSH 凭据')
+    return
+  }
   try {
     const sample = await collectMetrics(
       {
         host: asset.host,
-        port: asset.port,
+        port: secret.port,
         username: secret.username,
         password: secret.password,
         privateKey: secret.privateKey,
@@ -61,47 +65,61 @@ async function collectAll(): Promise<void> {
   }
 }
 
-/** 采集所有数据库连接的健康状态（写入健康时序） */
+/** 采集所有数据库连接的健康状态（写入健康时序）。带防重入：慢连接挂起时下一轮跳过 */
+let dbRunning = false
 async function collectDbHealths(): Promise<void> {
-  const conns = memoryStore.getDbConnections()
-  await Promise.all(
-    conns.map(async (c) => {
-      try {
-        const h = await checkHealth(c)
-        pushHealth({
-          assetId: c.id,
-          kind: 'db',
-          checkedAt: h.checkedAt,
-          status: h.connected ? 'ok' : 'error',
-          score: h.connected ? Math.max(0, 100 - h.metrics.filter((m) => m.status === 'warn').length * 10) : 0,
-        })
-      } catch {
-        // 单 DB 失败不影响整体
-      }
-    })
-  )
+  if (dbRunning) return
+  dbRunning = true
+  try {
+    const conns = memoryStore.getDbConnections()
+    await Promise.all(
+      conns.map(async (c) => {
+        try {
+          const h = await checkHealth(c)
+          pushHealth({
+            assetId: c.id,
+            kind: 'db',
+            checkedAt: h.checkedAt,
+            status: h.connected ? 'ok' : 'error',
+            score: h.connected ? Math.max(0, 100 - h.metrics.filter((m) => m.status === 'warn').length * 10) : 0,
+          })
+        } catch {
+          // 单 DB 失败不影响整体
+        }
+      })
+    )
+  } finally {
+    dbRunning = false
+  }
 }
 
-/** 采集所有 K8s 集群的健康状态（写入健康时序） */
+/** 采集所有 K8s 集群的健康状态（写入健康时序）。带防重入：挂起的集群端点会叠轮次 */
+let clusterRunning = false
 async function collectClusterHealths(): Promise<void> {
-  const clusters = memoryStore.getClusters()
-  await Promise.all(
-    clusters.map(async (c) => {
-      try {
-        const d = await clusterDetail(c)
-        const score = d.cluster.healthScore
-        pushHealth({
-          assetId: c.id,
-          kind: 'cluster',
-          checkedAt: new Date().toISOString(),
-          status: d.cluster.status,
-          score,
-        })
-      } catch {
-        // 单集群失败不影响整体
-      }
-    })
-  )
+  if (clusterRunning) return
+  clusterRunning = true
+  try {
+    const clusters = memoryStore.getClusters()
+    await Promise.all(
+      clusters.map(async (c) => {
+        try {
+          const d = await clusterDetail(c)
+          const score = d.cluster.healthScore
+          pushHealth({
+            assetId: c.id,
+            kind: 'cluster',
+            checkedAt: new Date().toISOString(),
+            status: d.cluster.status,
+            score,
+          })
+        } catch {
+          // 单集群失败不影响整体
+        }
+      })
+    )
+  } finally {
+    clusterRunning = false
+  }
 }
 
 /** 启动周期采集（首次立即执行一次），返回定时器句柄。 */

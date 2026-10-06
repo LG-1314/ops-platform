@@ -96,12 +96,23 @@ function getBootLogPath(): string {
   return path.join(getLogDir(), 'ops-platform-boot.log')
 }
 
-// 统一写日志（启动 + 关键步骤 + 错误）
+// 单个日志文件体积上限（超过后滚动为 *.old.log，防止 boot/renderer 日志无限增长）
+const LOG_MAX_BYTES = 2 * 1024 * 1024
+
+// 统一写日志（启动 + 关键步骤 + 错误），带简单体积滚动
 function writeLog(file: string, message: string): void {
   try {
     const dir = getLogDir()
     fs.mkdirSync(dir, { recursive: true })
-    fs.appendFileSync(path.join(dir, file), `${new Date().toISOString()} ${message}\n`)
+    const p = path.join(dir, file)
+    try {
+      if (fs.statSync(p).size > LOG_MAX_BYTES) {
+        fs.renameSync(p, p.replace(/\.log$/, '.old.log'))
+      }
+    } catch {
+      /* 首次写入时文件不存在，属正常 */
+    }
+    fs.appendFileSync(p, `${new Date().toISOString()} ${message}\n`)
   } catch {
     /* ignore */
   }
@@ -167,9 +178,24 @@ function forwardRequest(
   })
 }
 
-ipcMain.handle('ops-api', async (_e, arg: { method: string; path: string; body?: unknown; userToken?: string }) => {
-  const port = Number(process.env.OPS_API_PORT || BASE_PORT)
-  const { statusCode, body } = await forwardRequest(port, arg.method, arg.path, arg.body, arg.userToken)
+ipcMain.handle(
+  'ops-api',
+  async (_e, arg: { method: string; path: string; body?: unknown; userToken?: string }) => {
+    // 渲染端传入的路径做白坯校验：必须以单个 '/' 开头，禁止协议相对路径、
+    // 目录回溯与控制字符，防止被劫持的渲染进程借 IPC 桥构造畸形请求。
+    const relPath = typeof arg?.path === 'string' ? arg.path : ''
+    const method = typeof arg?.method === 'string' ? arg.method.toUpperCase() : ''
+    if (
+      !relPath.startsWith('/') ||
+      relPath.startsWith('//') ||
+      relPath.includes('..') ||
+      /[\r\n\0]/.test(relPath) ||
+      !['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(method)
+    ) {
+      return { code: 400, message: 'invalid api request', data: null }
+    }
+    const port = Number(process.env.OPS_API_PORT || BASE_PORT)
+    const { statusCode, body } = await forwardRequest(port, method, relPath, arg.body, arg.userToken)
   // Express 统一返回信封 { code, data, message }；这里直接透传该信封，
   // 渲染端 bus.ts 的 request() 正是按此信封解析（res.code === 0 视为成功）。
   // /api 路由永远返回 JSON 信封（含 404 / fail），不会返回 HTML，故可安全解开 statusCode 包装。
@@ -183,7 +209,6 @@ ipcMain.handle('ops-api', async (_e, arg: { method: string; path: string; body?:
     data: null,
   }
 })
-
 // 渲染进程取回能力总线令牌（用于终端 WebSocket 鉴权），不落盘、不对外暴露明文凭据。
 ipcMain.handle('ops-auth-token', () => (getToken ? getToken() : ''))
 
@@ -225,10 +250,14 @@ if (!app.requestSingleInstanceLock()) {
   let showingFallback = false
   let apiServer: http.Server | null = null
   let isQuitting = false
+  let protocolRegistered = false
 
   /* eslint-disable no-inner-declarations */
   // 以下函数需闭包访问 win/apiServer/isQuitting，故在 else 块内声明（含分支启动逻辑）。
   function registerAppProtocol(): void {
+    // macOS activate / 异常恢复路径可能再次调用本函数；对同一 scheme 重复 handle 不安全，直接跳过
+    if (protocolRegistered) return
+    protocolRegistered = true
     const baseDir = app.isPackaged
       ? path.join(process.resourcesPath, 'app-dist')
       : path.join(__dirname, '..', 'dist')
@@ -355,6 +384,18 @@ if (!app.requestSingleInstanceLock()) {
     })
 
     win.once('ready-to-show', () => win?.show())
+
+    // 导航锁死：带 IPC 桥（ops-api/ops-auth-token）的页面绝不允许被导向远程内容。
+    // 仅放行本应用自有资源（file:// 首屏、ops:// 协议），window.open 一律拒绝，
+    // 并默认拒绝所有 Web 权限请求（摄像头/定位/通知等本应用均不需要）。
+    const APP_OWNED_URL = /^(ops|file):/i
+    win.webContents.on('will-navigate', (e, url) => {
+      if (!APP_OWNED_URL.test(url)) e.preventDefault()
+    })
+    win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+    win.webContents.session.setPermissionRequestHandler((_wc, _permission, callback) => {
+      callback(false)
+    })
 
     win.webContents.on('did-finish-load', () => {
       writeLog('ops-platform-boot.log', `did-finish-load url=${win?.webContents.getURL()}`)
@@ -707,8 +748,14 @@ if (!app.requestSingleInstanceLock()) {
       writeLog('ops-platform-boot.log', `proxy-set-warn ${e instanceof Error ? e.message : String(e)}`)
     }
 
-    // 打包后必须以 production 运行，Express 才会托管 dist 静态资源（否则窗口空白）
-    process.env.NODE_ENV = process.env.NODE_ENV || 'production'
+    // 打包后必须以 production 运行，Express 才会托管 dist 静态资源（否则窗口空白）。
+    // 打包产物无视外部 NODE_ENV：用户环境残留 NODE_ENV=development 时会绕过
+    // 应用令牌校验（auth.ts 按 NODE_ENV 判定），属于被利用面，这里直接钉死。
+    if (app.isPackaged) {
+      process.env.NODE_ENV = 'production'
+    } else {
+      process.env.NODE_ENV = process.env.NODE_ENV || 'production'
+    }
     writeLog('ops-platform-boot.log', `boot-start NODE_ENV=${process.env.NODE_ENV}`)
 
     // 持久化数据目录指向用户数据区（凭据密钥、store.json 落盘此处）
@@ -787,7 +834,12 @@ if (!app.requestSingleInstanceLock()) {
   })
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) boot()
+    if (BrowserWindow.getAllWindows().length === 0) {
+      // 首次启动完成（能力总线已在跑）后只重建窗口；
+      // 重复 boot() 会二次注册协议、二次 listen 端口，macOS 上会出错。
+      if (apiServer) createWindow(Number(process.env.OPS_API_PORT || BASE_PORT))
+      else boot()
+    }
   })
   /* eslint-enable no-inner-declarations */
 }

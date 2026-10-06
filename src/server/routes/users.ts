@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { asyncHandler, ok, fail } from '../utils/response'
 import { requireUser, requireAdmin, hashPassword, safeUser, getSafeUsers } from '../services/authService'
 import { memoryStore } from '../store/memoryStore'
+import { auditService } from '../services/auditService'
 import type { UserAccount, UserRole } from '@shared/types'
 
 export const usersRouter = Router()
@@ -33,11 +34,13 @@ usersRouter.post('/', requireUser, requireAdmin, asyncHandler(async (req, res) =
       : 'user-admin',
     username: uname,
     displayName: typeof displayName === 'string' && displayName.trim() ? displayName.trim() : uname,
-    role: (role === 'personal' ? 'personal' : 'admin') as UserRole,
+    // 最小权限默认：未显式声明角色一律 personal，防止省略字段意外建出管理员
+    role: (role === 'admin' ? 'admin' : 'personal') as UserRole,
     passwordHash: hashPassword(password),
     createdAt: new Date().toISOString(),
   }
   const created = memoryStore.addUser(u)
+  auditService.record('user.create', (req as { user?: { username?: string } }).user?.username || '?', `新建用户 ${u.username}（${u.role}）`)
   ok(res, safeUser(created))
 }))
 
@@ -56,6 +59,8 @@ usersRouter.put('/:id', requireUser, requireAdmin, asyncHandler(async (req, res)
     if (password.length < 8) return fail(res, 400, '密码至少 8 位')
     if (password.length > 1024) return fail(res, 400, '密码长度不能超过 1024 位')
     patch.passwordHash = hashPassword(password)
+    // 管理员重置的临时密码同样要求首次登录后修改
+    patch.mustChangePassword = true
   }
   // 防止最后一个管理员被降级
   const target = memoryStore.getUsers().find((x) => x.id === req.params.id)
@@ -65,12 +70,19 @@ usersRouter.put('/:id', requireUser, requireAdmin, asyncHandler(async (req, res)
   }
   const updated = memoryStore.updateUser(req.params.id, patch)
   if (!updated) return fail(res, 404, '用户不存在')
+  auditService.record(
+    'user.update',
+    (req as { user?: { username?: string } }).user?.username || '?',
+    `更新用户 ${updated.username}${password ? '（重置密码）' : ''}${patch.role ? `（角色→${patch.role}）` : ''}`
+  )
   ok(res, safeUser(updated))
 }))
 
 // 删除用户（管理员）
 usersRouter.delete('/:id', requireUser, requireAdmin, asyncHandler(async (req, res) => {
+  const target = memoryStore.getUsers().find((x) => x.id === req.params.id)
   const okRemoved = memoryStore.removeUser(req.params.id)
   if (!okRemoved) return fail(res, 404, '用户不存在或不能删除最后一个管理员')
+  auditService.record('user.delete', (req as { user?: { username?: string } }).user?.username || '?', `删除用户 ${target?.username || req.params.id}`)
   ok(res, { ok: true })
 }))

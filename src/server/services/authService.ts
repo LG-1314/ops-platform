@@ -10,20 +10,22 @@ import type { UserAccount, SafeUser } from '@shared/types'
 
 export const USER_TOKEN_HEADER = 'x-ops-user-token'
 
-// 会话：token -> { userId, expiresAt }。滑动续期：每次访问刷新 expiresAt。
-// 定期清理过期会话（避免长期运行内存膨胀 + 防复用已失效 token）。
+// 会话：token -> { userId, createdAt, expiresAt }。滑动续期 + 绝对上限：
+// 长期活跃的会话也不能无限续命（丢失设备场景下最多 7 天必须重登）。
 interface Session {
   userId: string
+  createdAt: number
   expiresAt: number
 }
 const sessions = new Map<string, Session>()
 const SESSION_TTL_MS = 24 * 3600 * 1000
+const SESSION_MAX_MS = 7 * 24 * 3600 * 1000
 const CLEANUP_INTERVAL_MS = 10 * 60 * 1000
 
 function cleanupExpiredSessions(): void {
   const now = Date.now()
   for (const [token, s] of sessions) {
-    if (s.expiresAt <= now) sessions.delete(token)
+    if (s.expiresAt <= now || now - s.createdAt > SESSION_MAX_MS) sessions.delete(token)
   }
 }
 setInterval(cleanupExpiredSessions, CLEANUP_INTERVAL_MS).unref?.()
@@ -74,19 +76,20 @@ export function login(username: string, password: string): { token: string; user
   const now = new Date().toISOString()
   memoryStore.updateUser(u.id, { lastLoginAt: now })
   const token = crypto.randomBytes(24).toString('hex')
-  sessions.set(token, { userId: u.id, expiresAt: Date.now() + SESSION_TTL_MS })
+  sessions.set(token, { userId: u.id, createdAt: Date.now(), expiresAt: Date.now() + SESSION_TTL_MS })
   return { token, user: safeUser(u) }
 }
 
-/** 按 token 取当前用户（滑动续期：每次访问刷新 TTL）。 */
+/** 按 token 取当前用户（滑动续期：每次访问刷新 TTL；超过绝对上限强制重登）。 */
 export function currentUser(token: string): SafeUser | null {
   const s = sessions.get(token)
   if (!s) return null
-  if (s.expiresAt <= Date.now()) {
+  const now = Date.now()
+  if (s.expiresAt <= now || now - s.createdAt > SESSION_MAX_MS) {
     sessions.delete(token)
     return null
   }
-  s.expiresAt = Date.now() + SESSION_TTL_MS // 滑动续期
+  s.expiresAt = now + SESSION_TTL_MS // 滑动续期
   const u = memoryStore.getUsers().find((x) => x.id === s.userId)
   return u ? safeUser(u) : null
 }
@@ -102,7 +105,16 @@ export function requireUser(req: Request, res: Response, next: NextFunction): vo
   if (!token) return void res.status(401).json({ code: 401, message: '未登录：请先登录后再操作', data: null })
   const user = currentUser(token)
   if (!user) return void res.status(401).json({ code: 401, message: '登录已过期：请重新登录', data: null })
-  ;(req as Request & { user?: SafeUser }).user = user
+  // 首次登录强制改密的服务端硬约束：改密/登出/当前用户之外的一切接口一律 403。
+  // （此前只是前端弹窗提示，用户可以直接关掉弹窗继续用默认密码。）
+  if (
+    user.mustChangePassword &&
+    !/^\/api\/auth\//.test(req.originalUrl || `${req.baseUrl}${req.path}`)
+  ) {
+    return void res.status(403).json({ code: 403, message: '请先修改初始密码后再使用平台', data: null })
+  }
+  const reqWithUser = req as Request & { user?: SafeUser }
+  reqWithUser.user = user
   next()
 }
 

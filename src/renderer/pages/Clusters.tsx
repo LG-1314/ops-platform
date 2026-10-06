@@ -22,6 +22,8 @@ import {
   Tooltip,
   Paper,
   LinearProgress,
+  FormControlLabel,
+  Switch,
   List,
   ListItem,
   ListItemIcon,
@@ -99,6 +101,7 @@ export default function Clusters() {
     authType: 'token' as AuthType,
     token: '',
     kubeconfig: '',
+    insecureSkipTlsVerify: false,
   })
   const [creating, setCreating] = useState(false)
 
@@ -220,6 +223,7 @@ export default function Clusters() {
     }
     setCreating(true)
     setError('')
+    let credId: string | undefined
     try {
       const cred = await api.credentials.create({
         name: `${name} k8s 凭据`,
@@ -228,17 +232,21 @@ export default function Clusters() {
         token: authType === 'token' ? token.trim() : undefined,
         kubeconfig: authType === 'kubeconfig' ? kubeconfig.trim() : undefined,
       })
+      credId = cred.id
       const cluster = await api.clusters.create({
         name: name.trim(),
         endpoint: endpoint.trim(),
         credentialId: cred.id,
         authType,
+        insecureSkipTlsVerify: createForm.insecureSkipTlsVerify,
       })
       setCreateOpen(false)
-      setCreateForm({ name: '', endpoint: '', authType: 'token', token: '', kubeconfig: '' })
+      setCreateForm({ name: '', endpoint: '', authType: 'token', token: '', kubeconfig: '', insecureSkipTlsVerify: false })
       loadList()
       select(cluster.id)
     } catch (e) {
+      // 集群创建失败时回收刚建的 k8s 凭据，避免孤儿凭据
+      if (credId) await api.credentials.remove(credId).catch(() => {})
       setError((e as Error).message || '创建集群失败')
     } finally {
       setCreating(false)
@@ -267,7 +275,7 @@ export default function Clusters() {
           color={pct >= 80 ? 'error' : pct >= 60 ? 'warning' : 'primary'}
           sx={{ flex: 1, height: 6, borderRadius: 3 }}
         />
-        <Typography variant="caption" sx={{ minWidth: 34, fontFamily: 'monospace' }}>
+        <Typography variant="caption" sx={{ minWidth: 34, fontFamily: 'var(--font-mono)' }}>
           {pct}%
         </Typography>
       </Stack>
@@ -610,7 +618,7 @@ export default function Clusters() {
                 value={createForm.kubeconfig}
                 onChange={(e) => setCreateForm((f) => ({ ...f, kubeconfig: e.target.value }))}
                 placeholder={'apiVersion: v1\nkind: Config\nclusters:\n  - cluster:\n      server: https://...\n    name: ...'}
-                sx={{ fontFamily: 'monospace' }}
+                sx={{ fontFamily: 'var(--font-mono)' }}
               />
             )}
             <Paper variant="outlined" sx={{ p: 1.5, bgcolor: 'action.hover' }}>
@@ -618,6 +626,16 @@ export default function Clusters() {
                 认证信息将被 AES-256-GCM 加密存储，仅用于集群连接，绝不明文落盘。连接失败时会给出分级排查指引。
               </Typography>
             </Paper>
+            <FormControlLabel
+              control={
+                <Switch
+                  size="small"
+                  checked={createForm.insecureSkipTlsVerify}
+                  onChange={(e) => setCreateForm((f) => ({ ...f, insecureSkipTlsVerify: e.target.checked }))}
+                />
+              }
+              label="跳过 TLS 证书校验（自签名集群，存在中间人风险）"
+            />
           </Stack>
         </DialogContent>
         <DialogActions>

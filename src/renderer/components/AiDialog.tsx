@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   Dialog,
   DialogTitle,
@@ -60,17 +60,26 @@ export default function AiDialog({ open, title, context, onClose }: Props) {
     }
   }
 
+  // 依赖用"上下文指纹"而非对象引用：父组件每次渲染都会新建 context 字面量，
+  // 按引用比较会让弹窗打开期间任意父级 re-render 都重新触发一次付费的大模型请求。
+  const contextRef = useRef<AiContextPayload | null | undefined>(context)
+  contextRef.current = context
+  const contextKey = context ? `${context.kind}|${JSON.stringify(context.payload)}` : ''
   useEffect(() => {
-    if (!open || !context) return
+    if (!open || !contextKey) return
+    if (loading) return
+    const ctx = contextRef.current
+    if (!ctx) return
     setLoading(true)
     setReply('')
     setError('')
     api.ai
-      .chat([], { kind: context.kind, payload: context.payload })
+      .chat([], { kind: ctx.kind, payload: ctx.payload })
       .then((r) => setReply(r.reply))
       .catch((e) => setError((e as Error).message || 'AI 分析失败'))
       .finally(() => setLoading(false))
-  }, [open, context])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, contextKey])
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>

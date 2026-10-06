@@ -12,11 +12,22 @@ function dataDir(): string {
 /** 活动日志文件路径（仅写入平台自身数据目录，非用户个人文件） */
 const ACTIVITY_LOG = path.join(dataDir(), 'logs', 'ops-activity.log')
 
-/** 写一行活动日志（JSONL 格式，用于 log 工具读取） */
+/** 活动日志体积上限：超过后滚动为 .old（否则长期运行无限膨胀、log 工具全量读入内存） */
+const ACTIVITY_LOG_MAX = 2 * 1024 * 1024
+
+/** 写一行活动日志（JSONL 格式，用于 log 工具读取），带简单体积滚动 */
 function logActivity(tool: string, status: string, detail: string): void {
   try {
     const dir = path.dirname(ACTIVITY_LOG)
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+    try {
+      if (fs.existsSync(ACTIVITY_LOG) && fs.statSync(ACTIVITY_LOG).size > ACTIVITY_LOG_MAX) {
+        fs.rmSync(`${ACTIVITY_LOG}.old`, { force: true })
+        fs.renameSync(ACTIVITY_LOG, `${ACTIVITY_LOG}.old`)
+      }
+    } catch {
+      /* 滚动失败不阻塞写入 */
+    }
     const line = JSON.stringify({ ts: new Date().toISOString(), tool, status, detail }) + '\n'
     fs.appendFileSync(ACTIVITY_LOG, line, 'utf8')
   } catch {
@@ -44,19 +55,25 @@ function readRecentLogLines(n: number): string[] {
   }
 }
 
-/** 清理数据目录下的临时文件（仅删除 *.tmp / *.log.bak / *.old） */
+/** 清理数据目录下的过期临时文件（*.tmp / *.log.bak / *.old）。
+ *  *.tmp 是原子写的在写目标（open → fsync → rename 之间可能只有几十毫秒），
+ *  只清理 mtime 超过 1 小时的，避免把正在进行的写盘半成品删掉。 */
+const STALE_TMP_MS = 3600 * 1000
+
 function cleanTempFiles(): { freed: number; count: number } {
   let freed = 0
   let count = 0
   try {
     const dir = dataDir()
     if (!fs.existsSync(dir)) return { freed, count }
+    const now = Date.now()
     const entries = fs.readdirSync(dir, { withFileTypes: true })
     for (const e of entries) {
       if (e.isFile() && /\.(tmp|log\.bak|old)$/i.test(e.name)) {
         const p = path.join(dir, e.name)
         try {
           const stat = fs.statSync(p)
+          if (/\.(tmp)$/i.test(e.name) && now - stat.mtimeMs < STALE_TMP_MS) continue
           freed += stat.size
           count += 1
           fs.unlinkSync(p)
@@ -74,6 +91,7 @@ function cleanTempFiles(): { freed: number; count: number } {
           const p = path.join(logsDir, e.name)
           try {
             const stat = fs.statSync(p)
+            if (/\.tmp$/i.test(e.name) && now - stat.mtimeMs < STALE_TMP_MS) continue
             freed += stat.size
             count += 1
             fs.unlinkSync(p)
@@ -203,8 +221,8 @@ export const doloresService = {
         logs.push(`清理前：${before} MB`)
         logs.push(`清理后：${after} MB`)
         logs.push(`释放空间：${(freed / 1024 / 1024).toFixed(2)} MB（${count} 个临时文件）`)
-        logs.push('已清理：*.tmp / *.log.bak / *.old（仅限平台数据目录下）')
-        status = count > 0 ? 'ok' : 'ok'
+        logs.push('已清理：*.tmp / *.log.bak / *.old（仅限平台数据目录下，1 小时内的新临时文件不动）')
+        status = 'ok'
         logActivity('dir-clean', 'ok', `清理 ${count} 个文件，释放 ${(freed / 1024 / 1024).toFixed(2)} MB`)
         break
       }

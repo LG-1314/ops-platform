@@ -24,6 +24,8 @@ export interface CreateCredentialInput {
 
 /** 解密后的敏感字段，仅供连接器在内存中使用。 */
 export interface DecryptedSecret {
+  /** SSH 连接端口：凭据级配置，语义上属于凭据而非资产（asset.port 是探测端口） */
+  port?: number
   username?: string
   password?: string
   privateKey?: string
@@ -111,6 +113,7 @@ export const credentialService = {
     const c = memoryStore.getCredentials().find((x) => x.id === id)
     if (!c) return undefined
     return {
+      port: c.port,
       username: c.username,
       password: c.passwordEnc ? decrypt(c.passwordEnc) : undefined,
       privateKey: c.privateKeyEnc ? decrypt(c.privateKeyEnc) : undefined,

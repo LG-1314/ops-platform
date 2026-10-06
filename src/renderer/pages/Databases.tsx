@@ -138,6 +138,14 @@ export default function Databases() {
   async function onSubmit() {
     setSubmitting(true)
     setError(null)
+    let newlyCreatedCredId: string | undefined
+    // 端口防呆：清空输入会得到 NaN/0，直接拦在表单层
+    const port = Number(form.port)
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      setError('端口需为 1-65535 的整数')
+      setSubmitting(false)
+      return
+    }
     try {
       let credentialId: string | undefined = editingId
         ? conns.find((c) => c.id === editingId)?.credentialId
@@ -152,12 +160,13 @@ export default function Databases() {
           password: form.password,
         })
         credentialId = cred.id
+        newlyCreatedCredId = cred.id
       }
       const payload = {
         name: form.name,
         dbType: form.dbType,
         host: form.host,
-        port: form.port,
+        port,
         database: form.database || undefined,
         username: form.username || undefined,
         credentialId,
@@ -169,6 +178,8 @@ export default function Databases() {
       setForm({ name: '', dbType: 'mysql', host: '', port: 3306, database: '', username: '', password: '' })
       await load()
     } catch (e) {
+      // 编辑态未新建凭据时才需要回收（编辑态沿用旧凭据，不能删）
+      if (newlyCreatedCredId) await api.credentials.remove(newlyCreatedCredId).catch(() => {})
       setError((e as Error).message)
     } finally {
       setSubmitting(false)
@@ -245,6 +256,11 @@ export default function Databases() {
       <Dialog open={open} onClose={() => setOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle>{editingId ? '编辑数据库连接' : '添加数据库连接'}</DialogTitle>
         <DialogContent>
+          {error && (
+            <Alert severity="error" sx={{ mt: 1, mb: 1 }}>
+              {error}
+            </Alert>
+          )}
           <Grid container spacing={2} sx={{ mt: 0.5 }}>
             <Grid item xs={12} sm={6}>
               <TextField label="名称" fullWidth size="small" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />

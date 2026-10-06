@@ -2,7 +2,8 @@ import { memoryStore } from '../store/memoryStore'
 import type { Incident, CicdPipeline, IncidentState } from '@shared/types'
 
 function genId(prefix: string): string {
-  return `${prefix}-${Date.now().toString(36)}`
+  // 带随机后缀，与其它服务一致，避免同毫秒批量创建时 id 冲突
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
 }
 
 export const automationService = {

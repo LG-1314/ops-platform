@@ -14,6 +14,7 @@ import {
   ListItemIcon,
   ListItemText,
   Chip,
+  Tooltip,
 } from '@mui/material'
 import {
   Search,
@@ -71,6 +72,12 @@ export default function TopBar({ onMenu, alertCount = 0 }: Props) {
 
   const goSearch = () => {
     const q = keyword.trim()
+    // 全局搜索目前仅覆盖知识库（资产/工单暂无检索端点），占位符已如实标注；
+    // 个人角色无 /knowledge 访问权，回仪表盘并提示，避免点搜索"无响应"。
+    if (role !== 'admin') {
+      navigate('/dashboard')
+      return
+    }
     navigate(q ? `/knowledge?q=${encodeURIComponent(q)}` : '/knowledge')
   }
 
@@ -128,7 +135,7 @@ export default function TopBar({ onMenu, alertCount = 0 }: Props) {
         >
           <Search sx={{ color: theme.palette.text.disabled, fontSize: 20 }} />
           <InputBase
-            placeholder="搜索资产 / 知识 / 工单…"
+            placeholder={role === 'admin' ? '搜索知识库（Enter 跳转）…' : '搜索仅管理员可用'}
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && goSearch()}
@@ -138,26 +145,35 @@ export default function TopBar({ onMenu, alertCount = 0 }: Props) {
 
         <Box sx={{ flexGrow: 1 }} />
 
-        <IconButton
-          sx={{
-            color: theme.palette.text.secondary,
-            '&:hover': { color: theme.palette.primary.main, bgcolor: 'action.hover' },
-          }}
-          size="small"
-          onClick={() => navigate('/alerts')}
-          aria-label="查看告警"
-        >
-          <Badge badgeContent={alertCount} color="error">
-            <Notifications />
-          </Badge>
-        </IconButton>
+        <Tooltip title="告警中心">
+          <IconButton
+            sx={{
+              color: theme.palette.text.secondary,
+              '&:hover': { color: theme.palette.primary.main, bgcolor: 'action.hover' },
+            }}
+            size="small"
+            onClick={() => navigate('/alerts')}
+            aria-label="查看告警"
+          >
+            <Badge badgeContent={alertCount} color="error">
+              <Notifications />
+            </Badge>
+          </IconButton>
+        </Tooltip>
 
         {/* 管理员可切换个人视图；个人账号不能通过本地状态提权。 */}
         <Box
           ref={avatarRef}
           onClick={(e) => setAnchorEl(e.currentTarget)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault()
+              setAnchorEl(e.currentTarget)
+            }
+          }}
           role="button"
           aria-haspopup="menu"
+          tabIndex={0}
           sx={{
             display: 'flex',
             alignItems: 'center',
@@ -169,15 +185,18 @@ export default function TopBar({ onMenu, alertCount = 0 }: Props) {
             bgcolor: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(15,23,42,0.03)',
             cursor: 'pointer',
             '&:hover': { bgcolor: 'action.hover' },
+            '&:focus-visible': { outline: `2px solid ${theme.palette.primary.main}`, outlineOffset: 2 },
           }}
         >
           <Avatar
             sx={{
               width: 30,
               height: 30,
-              bgcolor: `linear-gradient(135deg, ${theme.palette.primary.main}, ${theme.palette.info.main})`,
+              // bgcolor 只接受颜色值，渐变必须用 background 属性（此前渐变被浏览器丢弃）
+              background: `linear-gradient(135deg, ${theme.palette.primary.main}, ${theme.palette.info.main})`,
               fontSize: 13,
               fontWeight: 700,
+              color: '#fff',
             }}
           >
             {user?.displayName?.[0] || (role === 'admin' ? '运' : '个')}

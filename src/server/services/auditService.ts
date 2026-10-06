@@ -1,5 +1,5 @@
 import { readJSONFile, writeJSONAtomic } from '../store/persist'
-import { logger } from '../utils/logger'
+import { logger, sanitizeLogText } from '../utils/logger'
 
 // 操作审计日志：记录关键安全事件（终端连接、登录、改密等），
 // 环形缓冲（最多 500 条）+ audit.json 持久化，供管理员通过 /api/audit 查看。
@@ -38,10 +38,12 @@ function persist(): void {
 }
 
 export function record(action: string, username: string, detail = ''): void {
-  entries.unshift({ id: genId(), at: new Date().toISOString(), action, username, detail })
+  // 折叠控制字符并截断：detail 常含用户可控内容（主机名、命令、UA 等），防止伪造审计行
+  const safeDetail = sanitizeLogText(detail, 500)
+  entries.unshift({ id: genId(), at: new Date().toISOString(), action, username: sanitizeLogText(username, 100), detail: safeDetail })
   if (entries.length > MAX_ENTRIES) entries.length = MAX_ENTRIES
   persist()
-  logger.info(`audit: ${action} by=${username} ${detail}`)
+  logger.info(`audit: ${action} by=${username} ${safeDetail}`)
 }
 
 export function listAudit(): AuditEntry[] {

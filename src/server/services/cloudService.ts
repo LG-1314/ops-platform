@@ -45,6 +45,7 @@ async function tencentRequest(
 
   const res = await fetch(`https://${host}`, {
     method: 'POST',
+    signal: AbortSignal.timeout(10000), // 云 API 挂起时不得无限占用路由
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
       Host: host,
@@ -89,7 +90,7 @@ async function aliRequest(
   const signature = b64(hmac1(`${secret}&`, stringToSign))
   par.Signature = signature
   const qs = new URLSearchParams(par).toString()
-  const res = await fetch(`https://ecs.aliyuncs.com/?${qs}`)
+  const res = await fetch(`https://ecs.aliyuncs.com/?${qs}`, { signal: AbortSignal.timeout(10000) })
   const json = (await res.json()) as Record<string, unknown> & { Code?: string; Message?: string }
   if (json.Code && json.Code !== '200') {
     throw new Error(`${json.Code}: ${json.Message ?? ''}`)
@@ -147,17 +148,27 @@ export async function listResources(account: CloudAccount): Promise<CloudResourc
   const region = account.region || 'ap-guangzhou'
 
   if (account.provider === 'tencent') {
-    const resp = await tencentRequest(
-      'cvm',
-      'DescribeInstances',
-      '2017-03-12',
-      region,
-      secret.accessKey ?? '',
-      secret.secretKey ?? '',
-      { Limit: 50 }
-    )
-    const list = (resp.InstanceSet as Record<string, unknown>[]) || []
-    return list.map((it) => {
+    // 分页拉全量：此前 Limit:50 写死，实例多于 50 台时"消失"的实例会被 diff
+    // 判定为已下线，产生虚假 remove 变更日志并污染快照。
+    const all: Record<string, unknown>[] = []
+    let offset = 0
+    for (;;) {
+      const resp = await tencentRequest(
+        'cvm',
+        'DescribeInstances',
+        '2017-03-12',
+        region,
+        secret.accessKey ?? '',
+        secret.secretKey ?? '',
+        { Limit: 100, Offset: offset }
+      )
+      const list = (resp.InstanceSet as Record<string, unknown>[]) || []
+      all.push(...list)
+      const total = Number(resp.TotalCount ?? 0)
+      offset += list.length
+      if (list.length === 0 || offset >= total || offset > 5000) break
+    }
+    return all.map((it) => {
       const cpu = Number(it.CPU ?? 0) || 0
       const mem = Number(it.Memory ?? 0) || 0
       // 腾讯云 ExpiredTime 为 unix 秒；按量计费实例无到期时间
@@ -177,9 +188,23 @@ export async function listResources(account: CloudAccount): Promise<CloudResourc
   }
 
   if (account.provider === 'aliyun') {
-    const resp = await aliRequest('DescribeInstances', region, secret.accessKey ?? '', secret.secretKey ?? '')
-    const list = (resp.Instances as Record<string, unknown> & { Instance?: Record<string, unknown>[] })?.Instance || []
-    return list.map((it) => {
+    // 分页拉全量：DescribeInstances 默认只返回 10 条（PageSize 缺省），
+    // 不分页会让第 11 台起的实例每次同步都被误判为"已下线"。
+    const all: Record<string, unknown>[] = []
+    let pageNumber = 1
+    for (;;) {
+      const resp = await aliRequest('DescribeInstances', region, secret.accessKey ?? '', secret.secretKey ?? '', {
+        PageSize: '100',
+        PageNumber: String(pageNumber),
+      })
+      const inner = resp.Instances as Record<string, unknown> & { Instance?: Record<string, unknown>[] }
+      const list = inner?.Instance || []
+      all.push(...list)
+      const total = Number(resp.TotalCount ?? 0)
+      pageNumber += 1
+      if (list.length === 0 || all.length >= total || pageNumber > 50) break
+    }
+    return all.map((it) => {
       const cpu = Number(it.Cpu ?? 0) || 0
       const mem = Number(it.Memory ?? 0) || 0
       // 阿里云 ExpiredTime 为 ISO 字符串；按量计费为空

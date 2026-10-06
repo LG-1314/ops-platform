@@ -21,8 +21,9 @@ function buildKc(KubeConfigCls: new (...args: any[]) => KubeConfig, cluster: Clu
     return kc
   }
   if (token && cluster.endpoint) {
+    // TLS 校验：默认开启。仅当集群显式声明 insecureSkipTlsVerify（自签名环境用户自担风险）才跳过。
     kc.loadFromOptions({
-      clusters: [{ name: 'c', server: cluster.endpoint, skipTLSVerify: true }],
+      clusters: [{ name: 'c', server: cluster.endpoint, skipTLSVerify: cluster.insecureSkipTlsVerify === true }],
       contexts: [{ name: 'ctx', cluster: 'c', user: 'u' }],
       users: [{ name: 'u', token }],
       currentContext: 'ctx',
@@ -45,11 +46,11 @@ export function parseCpuQuantity(v?: string): number {
   return n
 }
 export function parseMemQuantity(v?: string): number {
-  // 内存：Ki/Mi/Gi/Ti/K/M/G/B 等后缀 → 字节数
+  // 内存：Ki/Mi/Gi/Ti/Pi/Ei/K/M/G/B 等后缀 → 字节数
   if (!v) return 0
   const units: Record<string, number> = {
-    Ki: 1024, Mi: 1024 ** 2, Gi: 1024 ** 3, Ti: 1024 ** 4,
-    K: 1e3, M: 1e6, G: 1e9, T: 1e12, B: 1,
+    Ki: 1024, Mi: 1024 ** 2, Gi: 1024 ** 3, Ti: 1024 ** 4, Pi: 1024 ** 5, Ei: 1024 ** 6,
+    K: 1e3, M: 1e6, G: 1e9, T: 1e12, P: 1e15, E: 1e18, B: 1,
   }
   const m = /^([\d.]+)?([A-Za-z]+)?$/.exec(v.trim())
   if (!m) return 0

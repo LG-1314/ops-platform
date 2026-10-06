@@ -38,6 +38,9 @@ function KpiCardInner({
               sx={{
                 fontWeight: 700,
                 lineHeight: 1.2,
+                // 规范 §3：KPI 主数值用等宽字体 + tabular-nums（操作台感）
+                fontFamily: 'var(--font-mono)',
+                fontVariantNumeric: 'tabular-nums',
                 animation: 'opsCountPop 0.35s ease',
                 '@keyframes opsCountPop': {
                   from: { transform: 'scale(1.08)', opacity: 0.6 },

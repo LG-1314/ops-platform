@@ -152,12 +152,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       return json.data as T
     }
     const doRpc = async (): Promise<T> => {
+      // race 的超时计时器必须保存并在 finally 清理：此前每次 RPC 都泄漏一个 30s 定时器
+      let raceTimer: ReturnType<typeof setTimeout> | null = null
       try {
         const res = (await Promise.race([
           rpc!(method, path, body, userToken),
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error('timeout')), REQUEST_TIMEOUT_MS)
-          ),
+          new Promise<never>((_, reject) => {
+            raceTimer = setTimeout(() => reject(new Error('timeout')), REQUEST_TIMEOUT_MS)
+          }),
         ])) as ApiResponse<T> & Partial<ApiError>
         if (res.code !== 0) {
           if (res.code === 401 && path !== '/auth/login') unauthorizedHandler?.()
@@ -174,6 +176,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
           throw new ApiClientError({ code: -1, message: '请求超时，请稍后重试' })
         throw new ApiClientError({ code: -1, message: '网络异常，请检查连接' })
       } finally {
+        if (raceTimer) clearTimeout(raceTimer)
         clearTimeout(timer)
       }
     }
@@ -233,6 +236,11 @@ export const api = {
     update: (id: string, a: Partial<Asset>) => put<Asset>(`/assets/${id}`, a),
     remove: (id: string) => del<{ ok: true }>(`/assets/${id}`),
     discover: () => post<Asset[]>('/assets/discover'),
+    import: (items: Partial<Asset>[]) =>
+      post<{ total: number; created: number; skipped: { name: string; reason: string }[] }>(
+        '/assets/import',
+        { items }
+      ),
     probeAll: () => post<Asset[]>('/assets/probe'),
     probe: (id: string) => post<Asset>(`/assets/${id}/probe`),
     testConnection: (target: Pick<Asset, 'host' | 'ip' | 'port'>) => post<AssetConnectionTestResult>('/assets/test-connection', target),

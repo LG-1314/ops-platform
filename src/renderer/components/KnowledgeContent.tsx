@@ -16,7 +16,7 @@ function renderInline(text: string, highlight?: string[]): ReactNode[] {
           component="code"
           key={i}
           sx={{
-            fontFamily: 'JetBrains Mono, Consolas, monospace',
+            fontFamily: 'var(--font-mono)',
             fontSize: 12,
             color: 'primary.light',
             bgcolor: 'action.hover',

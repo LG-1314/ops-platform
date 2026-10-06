@@ -32,13 +32,24 @@ function rotateIfNeeded(filePath: string): void {
   }
 }
 
+/** 折叠换行/控制字符：用户可控字符串（主机名、错误消息等）不得伪造独立日志行。
+ *  逐字符过滤而非正则（控制字符正则触发 no-control-regex，且语义相同）。 */
+export function sanitizeLogText(input: string, maxLen = 8000): string {
+  let out = ''
+  for (const ch of String(input)) {
+    const code = ch.codePointAt(0)
+    out += code !== undefined && (code < 0x20 || code === 0x7f) ? '\\n' : ch
+  }
+  return out.slice(0, maxLen)
+}
+
 function write(level: string, message: string): void {
   try {
     const dir = logDir()
     fs.mkdirSync(dir, { recursive: true })
     const filePath = path.join(dir, `ops-${today()}.log`)
     rotateIfNeeded(filePath)
-    const line = `${new Date().toISOString()} [${level}] ${message}\n`
+    const line = `${new Date().toISOString()} [${level}] ${sanitizeLogText(message)}\n`
     fs.appendFileSync(filePath, line, 'utf8')
   } catch {
     /* 日志写失败绝不拖垮业务；回退 stderr 供调试 */

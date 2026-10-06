@@ -17,10 +17,11 @@ import {
   Chip,
   useTheme,
 } from '@mui/material'
-import { Search, Refresh, Add, DeleteOutline, Radar, Edit as EditIcon, CheckBox as IconSelect, Download as IconExport, Sell as IconTag, NetworkCheck } from '@mui/icons-material'
+import { Search, Refresh, Add, DeleteOutline, Radar, Edit as EditIcon, CheckBox as IconSelect, Download as IconExport, Sell as IconTag, NetworkCheck, UploadFile } from '@mui/icons-material'
 import { useSearchParams } from 'react-router-dom'
 import { api } from '../../capabilities/bus'
 import type { Asset, AssetType, Status, Credential } from '@shared/types'
+import { REFRESH_ASSETS_MS } from '@shared/constants'
 import DataTable, { Column } from '../components/DataTable'
 import StatusBadge from '../components/StatusBadge'
 import PageHeader from '../components/PageHeader'
@@ -101,6 +102,11 @@ export default function Assets() {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [tagOpen, setTagOpen] = useState(false)
   const [bulkTags, setBulkTags] = useState('')
+  // 批量导入（CSV 每行一条：名称,类型,主机,IP,标签[用 | 分隔]）
+  const [importOpen, setImportOpen] = useState(false)
+  const [importText, setImportText] = useState('')
+  const [importBusy, setImportBusy] = useState(false)
+  const [importResult, setImportResult] = useState<{ created: number; skipped: { name: string; reason: string }[] } | null>(null)
   const [bulkTagBusy, setBulkTagBusy] = useState(false)
   const [tagFilter, setTagFilter] = useState('')
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false)
@@ -126,10 +132,15 @@ export default function Assets() {
       api.assets
         .list(q || undefined, (type || undefined) as AssetType | undefined)
         .then(setAssets)
-        .catch(() => {})
-    }, 15000)
+        .catch(() => setError('自动刷新失败：能力总线暂时不可达，稍后自动重试'))
+    }, REFRESH_ASSETS_MS)
     return () => clearInterval(t)
   }, [q, type])
+
+  // 筛选条件变化时清空批量选择：否则隐藏行仍保持选中，批量删除/打标签会作用于不可见资产
+  useEffect(() => {
+    setSelected(new Set())
+  }, [q, type, tagFilter])
 
   const discover = async () => {
     setDiscovering(true)
@@ -353,13 +364,11 @@ export default function Assets() {
     setError('')
     let failed = 0
     for (const id of selected) {
-      const asset = assets.find((a) => a.id === id)
       try {
         await api.assets.update(id, { tags })
       } catch {
         failed += 1
       }
-      void asset
     }
     setBulkTagBusy(false)
     setTagOpen(false)
@@ -369,13 +378,55 @@ export default function Assets() {
     if (failed) setError(`批量打标签完成，${failed} 项失败`)
   }
 
+  // 批量导入：把粘贴的 CSV 文本解析为资产（中英文类型均可），服务端逐条校验 + 主机去重
+  const parseImportText = (text: string): Partial<Asset>[] => {
+    const TYPE_VALUE: Record<string, AssetType> = {
+      服务器: 'server', 中间件: 'middleware', 容器: 'container', 数据库: 'database', 网络: 'network',
+      server: 'server', middleware: 'middleware', container: 'container', database: 'database', network: 'network',
+    }
+    const out: Partial<Asset>[] = []
+    for (const line of text.split(/\r?\n/)) {
+      const t = line.trim()
+      if (!t || t.startsWith('#')) continue
+      const cols = t.split(/[,，\t]/).map((c) => c.trim())
+      const [name, type, host, ip, tags] = cols
+      if (!name || !host) continue
+      out.push({
+        name,
+        type: (type && TYPE_VALUE[type]) || 'server',
+        host,
+        ip: ip || undefined,
+        tags: tags ? tags.split(/[|｜、]/).map((x) => x.trim()).filter(Boolean) : [],
+      })
+    }
+    return out
+  }
+
+  const doImport = async () => {
+    const items = parseImportText(importText)
+    if (items.length === 0) {
+      setError('没有可导入的行：每行至少需要「名称,类型,主机」三列')
+      return
+    }
+    setImportBusy(true)
+    setError('')
+    try {
+      setImportResult(await api.assets.import(items))
+      await load()
+    } catch (e) {
+      setError((e as Error).message || '导入失败')
+    } finally {
+      setImportBusy(false)
+    }
+  }
+
   // 导出 CSV（浏览器端生成下载）
   const exportCsv = () => {
     const header = ['名称', '类型', '主机', 'IP', '标签', '状态', '健康分', '延迟(ms)', '最后检查']
     const rows = filtered.map((a) => [
       a.name,
       TYPE_LABEL[a.type] || a.type,
-      a.host,
+      a.host ?? '',
       a.ip ?? '',
       (a.tags || []).join('|'),
       a.reachable === false ? '离线' : a.reachable ? '在线' : '未知',
@@ -509,6 +560,17 @@ export default function Assets() {
               disabled={discovering || loading}
             >
               {discovering ? '发现中…' : '发现资产'}
+            </Button>
+            <Button
+              variant="outlined"
+              startIcon={<UploadFile />}
+              onClick={() => {
+                setImportResult(null)
+                setImportText('')
+                setImportOpen(true)
+              }}
+            >
+              批量导入
             </Button>
             <Button variant="contained" startIcon={<Add />} onClick={openAdd}>
               添加主机
@@ -776,6 +838,44 @@ export default function Assets() {
         <DialogActions>
           <Button onClick={() => setConfirmBulkDelete(false)}>取消</Button>
           <Button color="error" variant="contained" onClick={() => void doBulkDelete()}>删除</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* 批量导入：每行一条 CSV，服务端逐条校验 + 主机去重 */}
+      <Dialog open={importOpen} onClose={() => setImportOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>批量导入资产</DialogTitle>
+        <DialogContent>
+          <Stack spacing={1.5} sx={{ mt: 1 }}>
+            <Typography variant="caption" color="text.secondary">
+              每行一条：<b>名称,类型,主机,IP,标签</b>（后三列可选；类型支持 服务器/中间件/容器/数据库/网络，
+              标签用 | 分隔；# 开头的行忽略）。主机地址已存在的行会跳过。
+            </Typography>
+            <TextField
+              label="粘贴 CSV 数据"
+              multiline
+              minRows={8}
+              value={importText}
+              onChange={(e) => setImportText(e.target.value)}
+              placeholder={'web-05,服务器,10.0.1.15,10.0.1.15,web|nginx\nredis-01,中间件,10.0.2.30\n# 注释行会被忽略'}
+              sx={{ '& textarea': { fontFamily: 'var(--font-mono)', fontSize: 12 } }}
+            />
+            {importResult && (
+              <MuiAlert severity={importResult.skipped.length === 0 ? 'success' : 'warning'} onClose={() => setImportResult(null)}>
+                导入完成：成功 {importResult.created} 条
+                {importResult.skipped.length > 0 && `，跳过 ${importResult.skipped.length} 条（${importResult.skipped.map((s) => `${s.name}：${s.reason}`).join('；')}）`}
+              </MuiAlert>
+            )}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setImportOpen(false)} disabled={importBusy}>关闭</Button>
+          <Button
+            variant="contained"
+            onClick={() => void doImport()}
+            disabled={importBusy || !importText.trim()}
+          >
+            {importBusy ? '导入中…' : '导入'}
+          </Button>
         </DialogActions>
       </Dialog>
     </Box>

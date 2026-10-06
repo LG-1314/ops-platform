@@ -3,6 +3,7 @@ import mysql from 'mysql2/promise'
 import { Pool } from 'pg'
 import Redis from 'ioredis'
 import { credentialService } from './credentialService'
+import { logger } from '../utils/logger'
 
 function metric(name: string, value: string, status: Status = 'ok'): DbMetric {
   return { name, value, status }
@@ -12,7 +13,11 @@ function nowIso(): string {
   return new Date().toISOString()
 }
 
-/** 给任意异步检查加超时，避免连接挂起拖垮整个能力总线。 */
+/**
+ * 给任意异步检查加超时，避免连接挂起拖垮整个能力总线。
+ * 注意：reject 只能放弃等待，不能终止底层查询 —— 各 check 内部还需
+ * 自带"看门狗销毁连接"（否则挂起的 socket/连接池会每 2 分钟泄漏一个）。
+ */
 function withTimeout<T>(p: Promise<T>, ms: number, msg: string): Promise<T> {
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error(msg)), ms)
@@ -42,6 +47,16 @@ async function checkMysql(
     database: conn.database,
     connectTimeout: 6000,
   })
+  // 看门狗：mysql2 无语句级超时，服务端若"接受连接但不应答"会永远挂起，
+  // 必须在超时时强断 socket，否则每轮采集泄漏一个连接。
+  const watchdog = setTimeout(() => {
+    try {
+      const raw = c as unknown as { connection?: { destroy: () => void } }
+      raw.connection?.destroy()
+    } catch {
+      /* ignore */
+    }
+  }, 8500)
   try {
     const [v] = (await c.query('SELECT VERSION() AS v')) as unknown as [{ v: string }]
     const [stat] = (await c.query("SHOW GLOBAL STATUS LIKE 'Threads_connected'")) as unknown as [
@@ -72,6 +87,7 @@ async function checkMysql(
       checkedAt: nowIso(),
     }
   } finally {
+    clearTimeout(watchdog)
     await c.end().catch(() => {})
   }
 }
@@ -88,6 +104,9 @@ async function checkPostgres(
     password,
     database: conn.database,
     connectionTimeoutMillis: 6000,
+    // 语句级超时：挂起的查询会在 5s 后由服务端取消，finally 才能真正执行
+    statement_timeout: 5000,
+    query_timeout: 5000,
     max: 1,
   })
   try {
@@ -115,6 +134,7 @@ async function checkRedis(conn: DbConnection, password?: string): Promise<DbHeal
     port: conn.port || 6379,
     password: password || undefined,
     connectTimeout: 6000,
+    commandTimeout: 5000,
     lazyConnect: true,
     maxRetriesPerRequest: 1,
     enableOfflineQueue: false,
@@ -144,6 +164,19 @@ async function checkRedis(conn: DbConnection, password?: string): Promise<DbHeal
   }
 }
 
+/** 把底层驱动错误映射为面向用户的简洁文案；完整错误只进服务端日志。 */
+function sanitizeDbError(e: unknown): string {
+  const raw = e instanceof Error ? `${e.message}` : String(e)
+  logger.error(`[db] 健康检查失败：${raw}`)
+  if (e instanceof Error && e.name === 'AbortError') return '检查超时'
+  if (/timeout|timed out|ETIMEDOUT/i.test(raw)) return '连接超时：目标未在时限内响应'
+  if (/ECONNREFUSED/i.test(raw)) return '连接被拒绝：端口未监听或防火墙拦截'
+  if (/ENOTFOUND|EAI_AGAIN/i.test(raw)) return '域名解析失败'
+  if (/access denied|authentication|密码|auth/i.test(raw)) return '认证失败：用户名或密码错误'
+  if (/certificate|ssl|tls/i.test(raw)) return 'TLS/证书校验失败'
+  return '无法连接到数据库'
+}
+
 export async function checkHealth(conn: DbConnection): Promise<DbHealth> {
   const secret = conn.credentialId ? credentialService.decrypt(conn.credentialId) : undefined
   const user = conn.username || secret?.username
@@ -165,15 +198,15 @@ export async function checkHealth(conn: DbConnection): Promise<DbHealth> {
       error: '未知数据库类型',
     }
   } catch (e) {
-    const err = e as Error
+    // mysql2/pg 的错误消息可能携带主机、端口与 SQL 片段，不直接透传给渲染端
     return {
       id: conn.id,
       connectionId: conn.id,
       dbType: conn.dbType,
       connected: false,
-      metrics: [metric('错误', err.message, 'error')],
+      metrics: [metric('错误', sanitizeDbError(e), 'error')],
       checkedAt: nowIso(),
-      error: err.message,
+      error: sanitizeDbError(e),
     }
   }
 }

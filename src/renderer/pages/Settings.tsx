@@ -41,6 +41,7 @@ import { api } from '../../capabilities/bus'
 import { useThemeMode } from '../state/ThemeModeProvider'
 import type { NotificationChannel, NotificationChannelType } from '@shared/types'
 import PageHeader from '../components/PageHeader'
+import ConfirmDialog from '../components/ConfirmDialog'
 
 const TYPE_LABEL: Record<NotificationChannelType, string> = {
   webhook: 'Webhook',
@@ -89,6 +90,9 @@ export default function Settings() {
   const [form, setForm] = useState<ChannelForm>(emptyForm())
   const [editingId, setEditingId] = useState<string | null>(null)
   const [err, setErr] = useState('')
+  // 通知渠道删除确认 + 渠道保存防双击（此前双击会重复创建渠道）
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [channelSaving, setChannelSaving] = useState(false)
   const [testingId, setTestingId] = useState<string | null>(null)
   const [testMsg, setTestMsg] = useState<{ id: string; ok: boolean; message: string } | null>(null)
 
@@ -177,6 +181,7 @@ export default function Settings() {
 
   const onSave = async () => {
     setErr('')
+    if (channelSaving) return
     const v = validate()
     if (v) {
       setErr(v)
@@ -195,6 +200,7 @@ export default function Settings() {
       payload.url = form.url.trim()
       if (form.secret) payload.secret = form.secret // 留空则保留原密钥
     }
+    setChannelSaving(true)
     try {
       if (editingId) await api.notificationChannels.update(editingId, payload)
       else await api.notificationChannels.create(payload)
@@ -202,10 +208,13 @@ export default function Settings() {
       setChannels(await api.notificationChannels.list())
     } catch (e) {
       setErr((e as Error).message || '保存失败')
+    } finally {
+      setChannelSaving(false)
     }
   }
 
   const onDelete = async (id: string) => {
+    setConfirmDeleteId(null)
     try {
       await api.notificationChannels.remove(id)
       setChannels(await api.notificationChannels.list())
@@ -370,7 +379,7 @@ export default function Settings() {
                 <IconButton size="small" onClick={() => onEdit(c)}>
                   <IconEdit fontSize="small" />
                 </IconButton>
-                <IconButton size="small" color="error" onClick={() => onDelete(c.id)}>
+                <IconButton size="small" color="error" onClick={() => setConfirmDeleteId(c.id)}>
                   <IconDelete fontSize="small" />
                 </IconButton>
               </Paper>
@@ -520,8 +529,9 @@ export default function Settings() {
                 variant="contained"
                 startIcon={editingId ? <IconEdit /> : <IconAdd />}
                 onClick={onSave}
+                disabled={channelSaving}
               >
-                {editingId ? '保存' : '添加'}
+                {channelSaving ? '保存中…' : editingId ? '保存' : '添加'}
               </Button>
               {editingId && (
                 <Button variant="text" onClick={resetForm}>
@@ -689,6 +699,15 @@ export default function Settings() {
           </List>
         </CardContent>
       </Card>
+
+      {/* 通知渠道删除确认 */}
+      <ConfirmDialog
+        open={!!confirmDeleteId}
+        title="删除通知渠道"
+        content="确定删除该通知渠道吗？删除后相关告警将不再向其推送。"
+        onConfirm={() => confirmDeleteId && void onDelete(confirmDeleteId)}
+        onClose={() => setConfirmDeleteId(null)}
+      />
     </Box>
   )
 }

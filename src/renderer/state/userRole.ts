@@ -74,9 +74,11 @@ export function useIsLoggedIn(): boolean {
   return useSyncExternalStore(subscribe, () => Boolean(session.token))
 }
 
-/** 登录成功：写入 token + user 并通知。 */
+/** 登录成功：写入 token + user 并通知。
+ *  视图角色沿用该管理员此前的本地偏好（localStorage），保证"管理员切了个人视图
+ *  → 登出 → 登录"与"刷新页面"两条路径行为一致；个人账号永远回真实角色。 */
 export function setSession(token: string, user: SafeUser): void {
-  session = { token, user, viewRole: user.role }
+  session = { token, user, viewRole: readViewRole(user) }
   try {
     localStorage.setItem(USER_TOKEN_KEY, token)
     localStorage.setItem(USER_INFO_KEY, JSON.stringify(user))
@@ -86,12 +88,13 @@ export function setSession(token: string, user: SafeUser): void {
   emit()
 }
 
-/** 登出：清除会话。 */
+/** 登出：清除会话（含视图角色偏好，避免下次登录到错误视图）。 */
 export function clearSession(): void {
   session = { token: null, user: null, viewRole: 'personal' }
   try {
     localStorage.removeItem(USER_TOKEN_KEY)
     localStorage.removeItem(USER_INFO_KEY)
+    localStorage.removeItem(STORAGE_KEY)
   } catch {
     /* ignore */
   }
