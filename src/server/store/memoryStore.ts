@@ -84,20 +84,46 @@ const store: Store = {
 function seed(): void {
   const now = new Date().toISOString()
 
-  store.assets.push(
-    {
-      id: 'asset-localhost',
-      name: `本机 (${hostname()})`,
-      type: 'server',
-      host: hostname(),
-      ip: '127.0.0.1',
-      source: 'auto',
-      tags: ['local', os.platform(), os.arch()],
+  store.assets.push({
+    id: 'asset-localhost',
+    name: `本机 (${hostname()})`,
+    type: 'server',
+    host: hostname(),
+    ip: '127.0.0.1',
+    source: 'auto',
+    tags: ['local', os.platform(), os.arch()],
+    createdAt: now,
+    healthScore: 92,
+    status: 'ok',
+    lastScanAt: now,
+  })
+
+  // 演示数据（web-01/db-01/gw-01 假主机及其告警/巡检/事故）仅在开发预览模式播种：
+  // 正式版首次启动应为空台账，避免演示资产污染真实监控与健康分。
+  if (process.env.NODE_ENV !== 'production') seedDemoData(now)
+
+  // 默认管理员账号（RBAC）：admin / admin123，首次登录强制改密
+  if (store.users.length === 0) {
+    store.users.push({
+      id: genId('user'),
+      username: 'admin',
+      displayName: '系统管理员',
+      role: 'admin',
+      passwordHash: hashPassword('admin123'),
       createdAt: now,
-      healthScore: 92,
-      status: 'ok',
-      lastScanAt: now,
-    },
+      mustChangePassword: true,
+    })
+  }
+
+  // 预置 AI 智能体（角色化运维专家）：新装即开箱可用，可编辑 / 增删 / 启停
+  if (store.aiAgents === undefined || store.aiAgents.length === 0) {
+    store.aiAgents = seedAiAgents(now)
+  }
+}
+
+/** 开发预览用的演示数据（正式版不播种）。 */
+function seedDemoData(now: string): void {
+  store.assets.push(
     {
       id: 'web-01',
       name: 'web-01',
@@ -188,27 +214,6 @@ function seed(): void {
     updatedAt: now,
     relatedKnowledge: ['内存不足 OOM 进程被杀'],
   })
-
-  // 注：不再预置「生产集群」种子。无凭据/不可达的占位集群会让用户点详情必 502，
-  // 改为由用户自行录入真实集群（关联凭据或提供 kubeconfig）后，详情页才会真实连接。
-
-  // 默认管理员账号（RBAC）：admin / admin123，首次登录强制改密
-  if (store.users.length === 0) {
-    store.users.push({
-      id: genId('user'),
-      username: 'admin',
-      displayName: '系统管理员',
-      role: 'admin',
-      passwordHash: hashPassword('admin123'),
-      createdAt: now,
-      mustChangePassword: true,
-    })
-  }
-
-  // 预置 AI 智能体（角色化运维专家）：新装即开箱可用，可编辑 / 增删 / 启停
-  if (store.aiAgents === undefined || store.aiAgents.length === 0) {
-    store.aiAgents = seedAiAgents(now)
-  }
 }
 
 function seedAiAgents(now: string): AiAgent[] {
@@ -307,6 +312,25 @@ if (persisted && typeof persisted === 'object') {
   store.aiConfig = p.aiConfig
   // 老版本数据升级：无 AI 智能体时播种预置专家
   store.aiAgents = p.aiAgents && p.aiAgents.length ? p.aiAgents : seedAiAgents(new Date().toISOString())
+
+  // 一次性迁移（正式版）：清除历史版本播种的演示数据。按固定种子 ID 精确匹配，
+  // 用户自建的任何数据都不受影响；已清除过后重复运行是无操作（幂等）。
+  if (process.env.NODE_ENV === 'production') {
+    const demoAssets = new Set(['web-01', 'db-01', 'gw-01'])
+    const before = { assets: store.assets.length, alerts: store.alerts.length, patrols: store.patrols.length, incidents: store.incidents.length }
+    store.assets = store.assets.filter((a) => !demoAssets.has(a.id))
+    store.alerts = store.alerts.filter((a) => a.id !== 'alert-1' && a.id !== 'alert-2' && !demoAssets.has(a.assetId ?? ''))
+    store.patrols = store.patrols.filter((t) => t.id !== 'patrol-basic')
+    store.incidents = store.incidents.filter((i) => i.id !== 'inc-1')
+    const removed =
+      before.assets - store.assets.length +
+      before.alerts - store.alerts.length +
+      before.patrols - store.patrols.length +
+      before.incidents - store.incidents.length
+    if (removed > 0) {
+      logger.info(`[memoryStore] 已清理演示数据 ${removed} 条（web-01/db-01/gw-01 及其告警、演示巡检与事故）；正式版不再预置演示数据`)
+    }
+  }
   // 老版本数据升级：无任何用户时播种默认管理员 admin/admin123
   if (store.users.length === 0) {
     store.users.push({
